@@ -1174,7 +1174,7 @@ Catch
 "The remote server returned an error: (404) Not Found"
 }
 
-        if (Test-Path -Path $PSCommandPath$checkVersion){
+        if (Test-Path -Path "$PSCommandPath.NEW"){
         Rename-Item -path $PSCommandPath -NewName "$PSCommandPath.OLD"
         Rename-Item -Path "$PSCommandPath.NEW" -NewName $PSCommandPath
         Write-Host "Finished Updating, please restart script"
