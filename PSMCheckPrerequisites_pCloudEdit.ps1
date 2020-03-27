@@ -961,7 +961,7 @@ $errorMsg = ""
 $cert1 = 0
 $cert2 = 0
 Try{
-$cert1 = Invoke-WebRequest -Uri http://crl3.digicert.com/CloudFlareIncECCCA2.crl -TimeoutSec 6 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -UseBasicParsing | select -ExpandProperty StatusCode
+$cert1 = Invoke-WebRequest -Uri http://crl3.digicert.com/CloudFlareIncECCCA2.crl -TimeoutSec 6 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -UseBasicParsing  | select -ExpandProperty StatusCode
 $cert2 = Invoke-WebRequest -Uri http://crl4.digicert.com/CloudFlareIncECCCA2.crl -TimeoutSec 6 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -UseBasicParsing | select -ExpandProperty StatusCode
 
     If($cert1 -and $cert2 -eq 200)
@@ -1155,7 +1155,7 @@ $webVersion = New-Object System.Net.WebClient
 
 Try
 {
-$checkVersion = $webVersion.DownloadString("https://drive.google.com/uc?export=download&id=1COoWnUmMECrv1dt2DJ4euftEcCFrCkM1").ToString()
+$checkVersion = (Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/sn1kzZe/ps/master/Latest.txt1" -ErrorAction SilentlyContinue).Content
 }
 Catch
 {
@@ -1167,7 +1167,7 @@ if ($checkVersion -gt $versionNumber){
 Write-Host "Found new version: $checkVersion, Updating..." -ForegroundColor DarkCyan
 Try
 {
-$downloadNewVersion = $webVersion.DownloadFileAsync("https://drive.google.com/uc?export=download&id=1foBVGjvICzsj1JeWQ_-rpNequUxV8WbE","$PSCommandPath$checkVersion")
+Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/sn1kzZe/ps/master/PSMCheckPrerequisites_pCloudEdit.ps1" -ErrorAction SilentlyContinue -OutFile "$PSCommandPath$checkVersion"
 }
 Catch
 {
@@ -1230,4 +1230,3 @@ versionUpdate #check if latest version
 ###########################################################################################
 # Main end
 ###########################################################################################	
-
