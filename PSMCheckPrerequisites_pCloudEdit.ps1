@@ -1164,7 +1164,7 @@ Catch
 
 
 if ($checkVersion -gt $versionNumber){
-Write-Host "Found new version: $checkVersion, Updating..." -ForegroundColor DarkCyan
+Write-Host "Found new version: $checkVersion Updating..." -ForegroundColor DarkCyan
 Try
 {
 Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/sn1kzZe/ps/master/PSMCheckPrerequisites_pCloudEdit.ps1" -ErrorAction SilentlyContinue -OutFile "$PSCommandPath.NEW"
