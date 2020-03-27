@@ -1178,7 +1178,7 @@ Catch
         Rename-Item -path $PSCommandPath -NewName "$PSCommandPath.OLD"
         Rename-Item -Path "$PSCommandPath.NEW" -NewName $PSCommandPath
 	Remove-Item -Path "$PSCommandPath.OLD"
-        Write-Host "Finished Updating, please restart script"
+        Write-Host "Finished Updating, please close window (Regular or ISE) and relaunch script"
         Pause
         Exit
         }
