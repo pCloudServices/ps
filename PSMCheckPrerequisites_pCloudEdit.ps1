@@ -1177,6 +1177,7 @@ Catch
         if (Test-Path -Path "$PSCommandPath.NEW"){
         Rename-Item -path $PSCommandPath -NewName "$PSCommandPath.OLD"
         Rename-Item -Path "$PSCommandPath.NEW" -NewName $PSCommandPath
+	Remove-Item -Path "$PSCommandPath.OLD"
         Write-Host "Finished Updating, please restart script"
         Pause
         Exit
