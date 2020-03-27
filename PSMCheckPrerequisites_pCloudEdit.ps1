@@ -1155,7 +1155,7 @@ $webVersion = New-Object System.Net.WebClient
 
 Try
 {
-$checkVersion = (Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/sn1kzZe/ps/master/Latest.txt1" -ErrorAction SilentlyContinue).Content
+$checkVersion = (Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/sn1kzZe/ps/master/Latest.txt" -ErrorAction SilentlyContinue).Content
 }
 Catch
 {
