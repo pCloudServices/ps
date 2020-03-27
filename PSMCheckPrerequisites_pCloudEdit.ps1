@@ -1151,45 +1151,55 @@ function versionUpdate(){
 Write-Host "Current version is: $versionNumber"
 Write-Host "Checking for new version" -ForegroundColor DarkCyan
 $checkVersion = ""
+$checkVersionOK = ""
 $webVersion = New-Object System.Net.WebClient
 
 Try
 {
+$checkVersionOK = (Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/sn1kzZe/ps/master/Latest.txt" -ErrorAction SilentlyContinue).StatusCode
+
+If ($checkVersionOK -eq "200"){
 $checkVersion = (Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/sn1kzZe/ps/master/Latest.txt" -ErrorAction SilentlyContinue).Content.toString().trim()
 }
-Catch
-{
-"The remote server returned an error: (404) Not Found"
-}
-
-
-if ($checkVersion -gt $versionNumber){
-Write-Host "Found new version: $checkVersion Updating..." -ForegroundColor DarkCyan
-Try
-{
-Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/sn1kzZe/ps/master/PSMCheckPrerequisites_pCloudEdit.ps1" -ErrorAction SilentlyContinue -OutFile "$PSCommandPath.NEW"
 }
 Catch
 {
 "The remote server returned an error: (404) Not Found"
 }
 
-        if (Test-Path -Path "$PSCommandPath.NEW"){
-        Rename-Item -path $PSCommandPath -NewName "$PSCommandPath.OLD"
-        Rename-Item -Path "$PSCommandPath.NEW" -NewName $PSCommandPath
-	Remove-Item -Path "$PSCommandPath.OLD"
-        Write-Host "Finished Updating, please close window (Regular or ISE) and relaunch script"
-        Pause
-        Exit
-        }
-        else
-        {
-        Write-Host "Can't find the new script at location '$PSScriptRoot'."
-        }
+If ($checkVersionOK -eq "200"){
+    if ($checkVersion -gt $versionNumber){
+    Write-Host "Found new version: $checkVersion Updating..." -ForegroundColor DarkCyan
+    Try
+    {
+    Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/sn1kzZe/ps/master/PSMCheckPrerequisites_pCloudEdit.ps1" -ErrorAction SilentlyContinue -OutFile "$PSCommandPath.NEW"
+    }
+    Catch
+    {
+    "The remote server returned an error: (404) Not Found"
+    }
+
+            if (Test-Path -Path "$PSCommandPath.NEW"){
+            Rename-Item -path $PSCommandPath -NewName "$PSCommandPath.OLD"
+            Rename-Item -Path "$PSCommandPath.NEW" -NewName $PSCommandPath
+	        Remove-Item -Path "$PSCommandPath.OLD"
+            Write-Host "Finished Updating, please close window (Regular or ISE) and relaunch script" -ForegroundColor DarkCyan
+            Pause
+            Exit
+            }
+            else
+            {
+            Write-Host "Can't find the new script at location '$PSScriptRoot'."
+            }
+            }
+            Else
+            {
+            Write-Host "Current version is latest!" -ForegroundColor DarkCyan
+            }
 }
 Else
 {
-Write-Host "Current version is latest!" -ForegroundColor DarkCyan
+Write-Host "Couldn't check for new script version, resuming in offline mode" -ForegroundColor DarkCyan
 }
 }
 	
