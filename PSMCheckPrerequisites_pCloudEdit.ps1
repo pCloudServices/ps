@@ -1156,10 +1156,10 @@ $webVersion = New-Object System.Net.WebClient
 
 Try
 {
-$checkVersionOK = (Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/sn1kzZe/ps/master/Latest.txt" -ErrorAction SilentlyContinue).StatusCode
+$checkVersionOK = (Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/pCloudServices/ps/master/Latest.txt" -ErrorAction SilentlyContinue).StatusCode
 
 If ($checkVersionOK -eq "200"){
-$checkVersion = (Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/sn1kzZe/ps/master/Latest.txt" -ErrorAction SilentlyContinue).Content.toString().trim()
+$checkVersion = (Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubusercontent.com/pCloudServices/ps/master/Latest.txt" -ErrorAction SilentlyContinue).Content.toString().trim()
 }
 }
 Catch
