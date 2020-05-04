@@ -1,4 +1,4 @@
- <#
+﻿ <#
   .DESCRIPTION
   Script checks prerequisites on the PSM server.
   .PARAMETER OutOfDomain
@@ -14,11 +14,10 @@
 [cmdletbinding()]
 Param([switch]$OutOfDomain)
 
-
 ## configuration
 ##############################################################
 
-$versionNumber = "7"
+$versionNumber = "8"
 
 ## list of checks to be performed.
 $arrCheckPrerequisites = @(
@@ -57,6 +56,121 @@ $arrGPO = @(
 $global:table = ""
 $SEPARATE_LINE = "------------------------------------------------------------------------" 
 $skip = "SKIP"
+
+Function SetExecPolicy(){
+$ep = Get-ExecutionPolicy
+if ($ep -ne "Bypass")
+{
+Set-ExecutionPolicy RemoteSigned -Force
+}
+}
+
+Function GetListofDCsAndTestBindAccount()
+{
+$UserPrincipal = DomainUser
+if($UserPrincipal.ContextType -eq "Domain"){
+
+
+function listControllers
+{
+$dclist = ""
+$Domain = [DirectoryServices.ActiveDirectory.Domain]::GetCurrentDomain().name
+$dclist = netdom query /D:$Domain dc | Select-Object -SkipLast 2 | Select-Object -Skip 2 | ForEach-Object {"$_.$domain"}
+return $dclist
+}
+
+
+
+function Test-LDAPPorts {
+    [CmdletBinding()]
+    param(
+        [string] $ServerName,
+        [int] $Port
+    )
+
+    Remove-Item "$PSScriptRoot\DCInfo.txt" -Force -ErrorAction SilentlyContinue
+
+        try {
+            $LDAP = "LDAP://" + $ServerName + ':' + $Port
+            $Connection = [ADSI]($LDAP)
+            $Connection.Close()
+            return $true
+        } catch {
+            if ($_.Exception.ToString() -match "The server is not operational") {
+                Write-Warning "Can't open $ServerName`:$Port."
+            } elseif ($_.Exception.ToString() -match "The user name or password is incorrect") {
+                Write-Warning "Current user ($Env:USERNAME) doesn't seem to have access to to LDAP on port $Server`:$Port"
+            } else {
+                Write-Warning -Message $_
+            }
+        }
+        return $False
+    }
+
+Function Test-LDAP {
+    [CmdletBinding()]
+    param (
+        [alias('Server', 'IpAddress')][Parameter(Mandatory = $False)][string[]]$ComputerName,
+        [int] $GCPortLDAP = 3268,
+        [int] $GCPortLDAPSSL = 3269,
+        [int] $PortLDAP = 389,
+        [int] $PortLDAPS = 636
+    )
+
+        if (!$ComputerName){
+    $ComputerName = listControllers
+    }
+
+
+    # Checks for ServerName - Makes sure to convert IPAddress to DNS
+    foreach ($Computer in $ComputerName) {
+        [Array] $ADServerFQDN = (Resolve-DnsName -Name $Computer -ErrorAction SilentlyContinue)
+        if ($ADServerFQDN) {
+            if ($ADServerFQDN.NameHost) {
+                $ServerName = $ADServerFQDN[0].NameHost
+            } else {
+                [Array] $ADServerFQDN = (Resolve-DnsName -Name $Computer -ErrorAction SilentlyContinue)
+                $FilterName = $ADServerFQDN | Where-Object { $_.QueryType -eq 'A' }
+                $ServerName = $FilterName[0].Name
+            }
+        } else {
+            $ServerName = ''
+        }
+        $GlobalCatalogSSL = Test-LDAPPorts -ServerName $ServerName -Port $GCPortLDAPSSL -WarningAction SilentlyContinue
+        $GlobalCatalogNonSSL = Test-LDAPPorts -ServerName $ServerName -Port $GCPortLDAP -WarningAction SilentlyContinue
+        $ConnectionLDAPS = Test-LDAPPorts -ServerName $ServerName -Port $PortLDAPS -WarningAction SilentlyContinue
+        $ConnectionLDAP = Test-LDAPPorts -ServerName $ServerName -Port $PortLDAP -WarningAction SilentlyContinue
+
+
+        
+        #if Variable holds $true then print it's port out and sort it in a table.
+        $PortsThatWork = @(
+            if ($GlobalCatalogNonSSL) { $GCPortLDAP }
+            if ($GlobalCatalogSSL) { $GCPortLDAPSSL }
+            if ($ConnectionLDAP) { $PortLDAP }
+            if ($ConnectionLDAPS) { $PortLDAPS }
+        ) | Sort-Object
+        [pscustomobject]@{
+            DomainController    = $Computer
+            #ComputerFQDN       = $ServerName
+            GlobalCatalogLDAP  = $GlobalCatalogNonSSL
+            GlobalCatalogLDAPS = $GlobalCatalogSSL
+            LDAP               = $ConnectionLDAP
+            LDAPS              = $ConnectionLDAPS
+            AvailablePorts     = $PortsThatWork -join ','
+        }
+
+    }
+}
+
+
+Test-LDAP |format-table| Tee-Object -file "$PSScriptRoot\DCInfo.txt"
+
+
+
+
+}
+}
 
 Function GetPublicIP(){
 $PublicIP = ""
@@ -329,7 +443,7 @@ function  DomainUser()
         errorMsg = "";
         result = $result;
     }
-
+    return $UserPrincipal
 }
 
 function IsUserAdmin()
@@ -1125,24 +1239,24 @@ function  SQLServerPermissions()
     $result = $false
     $errorMsg = ""
 
+$SecPolGPO = @{
+    "SeDebugPrivilege" = "Debug Programs"
+    "SeBackupPrivilege" = "Back up files and directories"
+    "SeSecurityPrivilege" = "Manage auditing and security log"
+}
 
-    $SecPolGPO = @(
-      "SeDebugPrivilege",
-      "SeBackupPrivilege",
-      "SeSecurityPrivilege"
-   )
     
     $path = "C:\Windows\Temp\SecReport.txt"
     SecEdit /areas USER_RIGHTS /export /cfg $path
 
     $SecPol = gc $path
 
-foreach ($sec in $SecPolGPO) {
+foreach ($sec in $SecPolGPO.Keys) {
     $administrators = Select-String $path -Pattern $sec
         if($administrators -eq $null)
             {
         $actual = "False"
-        $errorMsg = "Missing administrators in " + $sec
+        $errorMsg = "Missing administrators in Group Policy: " + $SecPolGPO[$sec]
         $result = $false
             }
         else
@@ -1157,14 +1271,13 @@ foreach ($sec in $SecPolGPO) {
         else
             {
         $actual = "False"
-        $errorMsg = "Missing administrators in " + $sec
+        $errorMsg = "Missing administrators in Group Policy: " + $SecPolGPO[$sec]
         $result = $false
             }
             }
         }
 
     }
-
 
 
     [PsCustomObject]@{
@@ -1193,7 +1306,7 @@ $checkVersion = (Invoke-WebRequest -UseBasicParsing -Uri "https://raw.githubuser
 }
 Catch
 {
-"The remote server returned an error: (404) Not Found"
+write-host "Couldn't reach Github (404), probably FW block" -ForegroundColor DarkCyan
 }
 
 If ($checkVersionOK -eq "200"){
@@ -1205,7 +1318,7 @@ If ($checkVersionOK -eq "200"){
     }
     Catch
     {
-    "The remote server returned an error: (404) Not Found"
+    write-host "Couldn't reach Github (404), probably FW block" -ForegroundColor DarkCyan
     }
 
             if (Test-Path -Path "$PSCommandPath.NEW"){
@@ -1238,8 +1351,6 @@ Write-Host "Couldn't check for new script version, resuming in offline mode" -Fo
 # Main start
 ###########################################################################################
 
-versionUpdate		#check if latest version
-GetPublicIP			#retrieve public IP and save it locally
 
 	Try
 	{	
@@ -1254,7 +1365,10 @@ GetPublicIP			#retrieve public IP and save it locally
 		}
 		else
 		{
+            versionUpdate		#check if latest version
+            GetPublicIP			#retrieve public IP and save it locally
 		    CheckPrerequisites
+            GetListofDCsAndTestBindAccount		#retrieve list of available DCs from the current machine joined domain.
 		}
         
         
@@ -1271,11 +1385,12 @@ GetPublicIP			#retrieve public IP and save it locally
 ###########################################################################################
 # Main end
 ###########################################################################################	
+
 # SIG # Begin signature block
-# MIIfdQYJKoZIhvcNAQcCoIIfZjCCH2ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIIfdgYJKoZIhvcNAQcCoIIfZzCCH2MCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAOHcLB6TKOuAve
-# GgzHXWX5aq6YKu7JMrLy3dcoJfRJmqCCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBs3sOKOZM1qlXl
+# fsdY6COgFp9x8VYKN4iROD9D4IZcjaCCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
 # NStkZdZqMA0GCSqGSIb3DQEBCwUAMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBH
 # bG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9i
 # YWxTaWduIFJvb3QgQ0EwHhcNMTgwOTE5MDAwMDAwWhcNMjgwMTI4MTIwMDAwWjBM
@@ -1352,92 +1467,92 @@ GetPublicIP			#retrieve public IP and save it locally
 # rIzKAipex1J61Mf44/6Y6gOMGHW7jk84QxMSEbYIglfkHu+RhH8mhYRGKGgHOX3R
 # ViIoIxthvlG08/nTux3zeVnSAmXB5Z8KJ+FTzLyZhFii2i2TLAt/a95dMOb4YquH
 # qK9lmeFCLovYNIAihC7NHBruSGkt/sguM/17JWPpgHpjJxrIZH3dVH41LNPb3Bz2
-# KDHmv37ZRpQvuxAyctrTAPA6HJtuEJnIo6DhFR9LfTGCEFYwghBSAgEBMH4wbjEL
+# KDHmv37ZRpQvuxAyctrTAPA6HJtuEJnIo6DhFR9LfTGCEFcwghBTAgEBMH4wbjEL
 # MAkGA1UEBhMCQkUxGTAXBgNVBAoTEEdsb2JhbFNpZ24gbnYtc2ExRDBCBgNVBAMT
 # O0dsb2JhbFNpZ24gRXh0ZW5kZWQgVmFsaWRhdGlvbiBDb2RlU2lnbmluZyBDQSAt
 # IFNIQTI1NiAtIEczAgwhXYQh+9kPSKH6QS4wDQYJYIZIAWUDBAIBBQCgfDAQBgor
 # BgEEAYI3AgEMMQIwADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEE
-# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgVUMNiW70WGAY
-# 5PrwYJtJRdUUON9W9cIozHDSvK0zK38wDQYJKoZIhvcNAQEBBQAEggEAh6NSChQb
-# 8lDK1B59VLgML/Sq9U9f7NchQmzT0oPxMSqkIJZu2PK9UcPV4+rUF7OdIGvPRDfO
-# HuF1iN5OEdQKIvhvQdRKBWXD2r5AtJKqzUXQAs+tIYd2yMu6b0oAu7a6hb/xchev
-# SmvV5Gd8AJpGjMNt5jU2j9hZ/RbEQgCTi8asfGlqBwLke94HMeUB4HFn5UDytKCi
-# 2BtMxFonUTDJxpgEmtZENMkBUiACwNh5wq+3diG0osXPvEh3le7EP/uYouyS9ZG6
-# vpt+29f6n9HYvjJ9Wxd7bSk5FyM3SMkV4B6Ghk6AYMx5hsDtpYIVJVjiMjJlIhHH
-# fnJGhrwS0IZRiaGCDiswgg4nBgorBgEEAYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEH
-# AqCCDgQwgg4AAgEDMQ0wCwYJYIZIAWUDBAIBMIH+BgsqhkiG9w0BCRABBKCB7gSB
-# 6zCB6AIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBRFsFcu2UO9pDasYaUF
-# GnkeqkTGBAIUT1RDSRj/52KjjfEbVjk9ysZ+fwgYDzIwMjAwNDIyMDkyMzAzWjAD
-# AgEeoIGGpIGDMIGAMQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29y
-# cG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNV
-# BAMTKFN5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzOgggqL
-# MIIFODCCBCCgAwIBAgIQewWx1EloUUT3yYnSnBmdEjANBgkqhkiG9w0BAQsFADCB
-# vTELMAkGA1UEBhMCVVMxFzAVBgNVBAoTDlZlcmlTaWduLCBJbmMuMR8wHQYDVQQL
-# ExZWZXJpU2lnbiBUcnVzdCBOZXR3b3JrMTowOAYDVQQLEzEoYykgMjAwOCBWZXJp
-# U2lnbiwgSW5jLiAtIEZvciBhdXRob3JpemVkIHVzZSBvbmx5MTgwNgYDVQQDEy9W
-# ZXJpU2lnbiBVbml2ZXJzYWwgUm9vdCBDZXJ0aWZpY2F0aW9uIEF1dGhvcml0eTAe
-# Fw0xNjAxMTIwMDAwMDBaFw0zMTAxMTEyMzU5NTlaMHcxCzAJBgNVBAYTAlVTMR0w
-# GwYDVQQKExRTeW1hbnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UECxMWU3ltYW50ZWMg
-# VHJ1c3QgTmV0d29yazEoMCYGA1UEAxMfU3ltYW50ZWMgU0hBMjU2IFRpbWVTdGFt
-# cGluZyBDQTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALtZnVlVT52M
-# cl0agaLrVfOwAa08cawyjwVrhponADKXak3JZBRLKbvC2Sm5Luxjs+HPPwtWkPhi
-# G37rpgfi3n9ebUA41JEG50F8eRzLy60bv9iVkfPw7mz4rZY5Ln/BJ7h4OcWEpe3t
-# r4eOzo3HberSmLU6Hx45ncP0mqj0hOHE0XxxxgYptD/kgw0mw3sIPk35CrczSf/K
-# O9T1sptL4YiZGvXA6TMU1t/HgNuR7v68kldyd/TNqMz+CfWTN76ViGrF3PSxS9TO
-# 6AmRX7WEeTWKeKwZMo8jwTJBG1kOqT6xzPnWK++32OTVHW0ROpL2k8mc40juu1MO
-# 1DaXhnjFoTcCAwEAAaOCAXcwggFzMA4GA1UdDwEB/wQEAwIBBjASBgNVHRMBAf8E
-# CDAGAQH/AgEAMGYGA1UdIARfMF0wWwYLYIZIAYb4RQEHFwMwTDAjBggrBgEFBQcC
-# ARYXaHR0cHM6Ly9kLnN5bWNiLmNvbS9jcHMwJQYIKwYBBQUHAgIwGRoXaHR0cHM6
-# Ly9kLnN5bWNiLmNvbS9ycGEwLgYIKwYBBQUHAQEEIjAgMB4GCCsGAQUFBzABhhJo
-# dHRwOi8vcy5zeW1jZC5jb20wNgYDVR0fBC8wLTAroCmgJ4YlaHR0cDovL3Muc3lt
-# Y2IuY29tL3VuaXZlcnNhbC1yb290LmNybDATBgNVHSUEDDAKBggrBgEFBQcDCDAo
-# BgNVHREEITAfpB0wGzEZMBcGA1UEAxMQVGltZVN0YW1wLTIwNDgtMzAdBgNVHQ4E
-# FgQUr2PWyqNOhXLgp7xB8ymiOH+AdWIwHwYDVR0jBBgwFoAUtnf6aUhHn1MS1cLq
-# BzJ2B9GXBxkwDQYJKoZIhvcNAQELBQADggEBAHXqsC3VNBlcMkX+DuHUT6Z4wW/X
-# 6t3cT/OhyIGI96ePFeZAKa3mXfSi2VZkhHEwKt0eYRdmIFYGmBmNXXHy+Je8Cf0c
-# kUfJ4uiNA/vMkC/WCmxOM+zWtJPITJBjSDlAIcTd1m6JmDy1mJfoqQa3CcmPU1dB
-# kC/hHk1O3MoQeGxCbvC2xfhhXFL1TvZrjfdKer7zzf0D19n2A6gP41P3CnXsxnUu
-# qmaFBJm3+AZX4cYO9uiv2uybGB+queM6AL/OipTLAduexzi7D1Kr0eOUA2AKTaD+
-# J20UMvw/l0Dhv5mJ2+Q5FL3a5NPD6itas5VYVQR9x5rsIwONhSrS/66pYYEwggVL
-# MIIEM6ADAgECAhB71OWvuswHP6EBIwQiQU0SMA0GCSqGSIb3DQEBCwUAMHcxCzAJ
-# BgNVBAYTAlVTMR0wGwYDVQQKExRTeW1hbnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UE
-# CxMWU3ltYW50ZWMgVHJ1c3QgTmV0d29yazEoMCYGA1UEAxMfU3ltYW50ZWMgU0hB
-# MjU2IFRpbWVTdGFtcGluZyBDQTAeFw0xNzEyMjMwMDAwMDBaFw0yOTAzMjIyMzU5
-# NTlaMIGAMQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRp
-# b24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5
-# bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzMwggEiMA0GCSqG
-# SIb3DQEBAQUAA4IBDwAwggEKAoIBAQCvDoqq+Ny/aXtUF3FHCb2NPIH4dBV3Z5Cc
-# /d5OAp5LdvblNj5l1SQgbTD53R2D6T8nSjNObRaK5I1AjSKqvqcLG9IHtjy1GiQo
-# +BtyUT3ICYgmCDr5+kMjdUdwDLNfW48IHXJIV2VNrwI8QPf03TI4kz/lLKbzWSPL
-# gN4TTfkQyaoKGGxVYVfR8QIsxLWr8mwj0p8NDxlsrYViaf1OhcGKUjGrW9jJdFLj
-# V2wiv1V/b8oGqz9KtyJ2ZezsNvKWlYEmLP27mKoBONOvJUCbCVPwKVeFWF7qhUhB
-# IYfl3rTTJrJ7QFNYeY5SMQZNlANFxM48A+y3API6IsW0b+XvsIqbAgMBAAGjggHH
-# MIIBwzAMBgNVHRMBAf8EAjAAMGYGA1UdIARfMF0wWwYLYIZIAYb4RQEHFwMwTDAj
-# BggrBgEFBQcCARYXaHR0cHM6Ly9kLnN5bWNiLmNvbS9jcHMwJQYIKwYBBQUHAgIw
-# GRoXaHR0cHM6Ly9kLnN5bWNiLmNvbS9ycGEwQAYDVR0fBDkwNzA1oDOgMYYvaHR0
-# cDovL3RzLWNybC53cy5zeW1hbnRlYy5jb20vc2hhMjU2LXRzcy1jYS5jcmwwFgYD
-# VR0lAQH/BAwwCgYIKwYBBQUHAwgwDgYDVR0PAQH/BAQDAgeAMHcGCCsGAQUFBwEB
-# BGswaTAqBggrBgEFBQcwAYYeaHR0cDovL3RzLW9jc3Aud3Muc3ltYW50ZWMuY29t
-# MDsGCCsGAQUFBzAChi9odHRwOi8vdHMtYWlhLndzLnN5bWFudGVjLmNvbS9zaGEy
-# NTYtdHNzLWNhLmNlcjAoBgNVHREEITAfpB0wGzEZMBcGA1UEAxMQVGltZVN0YW1w
-# LTIwNDgtNjAdBgNVHQ4EFgQUpRMBqZ+FzBtuFh5fOzGqeTYAex0wHwYDVR0jBBgw
-# FoAUr2PWyqNOhXLgp7xB8ymiOH+AdWIwDQYJKoZIhvcNAQELBQADggEBAEaer/C4
-# ol+imUjPqCdLIc2yuaZycGMv41UpezlGTud+ZQZYi7xXipINCNgQujYk+gp7+zvT
-# Yr9KlBXmgtuKVG3/KP5nz3E/5jMJ2aJZEPQeSv5lzN7Ua+NSKXUASiulzMub6KlN
-# 97QXWZJBw7c/hub2wH9EPEZcF1rjpDvVaSbVIX3hgGd+Yqy3Ti4VmuWcI69bEepx
-# qUH5DXk4qaENz7Sx2j6aescixXTN30cJhsT8kSWyG5bphQjo3ep0YG5gpVZ6DchE
-# WNzm+UgUnuW/3gC9d7GYFHIUJN/HESwfAD/DSxTGZxzMHgajkF9cVIs+4zNbgg/F
-# t4YCTnGf6WZFP3YxggJaMIICVgIBATCBizB3MQswCQYDVQQGEwJVUzEdMBsGA1UE
-# ChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0
-# IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcg
-# Q0ECEHvU5a+6zAc/oQEjBCJBTRIwCwYJYIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJ
-# AzENBgsqhkiG9w0BCRABBDAcBgkqhkiG9w0BCQUxDxcNMjAwNDIyMDkyMzAzWjAv
-# BgkqhkiG9w0BCQQxIgQglsT/oaMnTnCsk5R04smt0wdWi0WW8qixlyGFlpksVc4w
-# NwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQgxHTOdgB9AjlODaXk3nwUxoD54oIBPP72
-# U+9dtx/fYfgwCwYJKoZIhvcNAQEBBIIBAD21wj0flS9Lvywnlqn5wAVE4/Y7shET
-# 6IvO1kbhI7yxcYJBBVD77WjL3+LoyYEf0YRv3repfI0Ld/PTYSvVKKxbBQI8ax6s
-# qeaGEB3dNPqDBugM6RhpwTFZw4ElKagw+8RHs46jhUmc2JUA5cPnnuHacN5fJO1Y
-# 130I7j3llyWTTc8RIUFikkJsun9N0H0npsbSiFmHFwvhoFAKwll4Q4ISvqkSPbga
-# Gh1tT6rXJHke33ZvEkdnHqTjUBPd4J3rkBk5bGdpzVUppjXJ6yINxxPiGRHZoBDj
-# HkJM+238YYG2PuOAauDKMNADvp5+gzYgUa2IDaveJp2jVcO+GpuVOxU=
+# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgXlE2SSNPTHGV
+# al3dhUgASHxqwiwz5W+e2Ox2DP7oahYwDQYJKoZIhvcNAQEBBQAEggEAFHI2NUYP
+# cyAkY5i0j/Zd5upzaxXg65ydAUj8PHyHISVCfbnRkuDbHRgjglbcEX+eXMToOOQG
+# 4sAmOonKwvJdLAserdAFPBVZ5OGm71C2MkEQw778wJkYtR4KV888Otp2JuuZzb4h
+# epP52XiTNt5F+tKsn/h4+jlLkAu2AsmvcS0fA/Ulpi9c6PyZ2hwv6ecY/WLluyjd
+# gow3SseEcWA/XqCARxcNgpPSCliBKyfdsXxf4CqZJUWngjaDjASjNndmbj2SgMJn
+# eLE7CKtMUFRSqYo0aB1NlPwXtmbMRJ5IDOND6jDYdreZC4jKDmV2wAHetdDxWatl
+# 5Rp2h5u0TXDPN6GCDiwwgg4oBgorBgEEAYI3AwMBMYIOGDCCDhQGCSqGSIb3DQEH
+# AqCCDgUwgg4BAgEDMQ0wCwYJYIZIAWUDBAIBMIH/BgsqhkiG9w0BCRABBKCB7wSB
+# 7DCB6QIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBRihzTf2zXiMdBwGyUI
+# 5TID5X3GhAIVAKFjlOUHNub0btyqm85N4hflXJtyGA8yMDIwMDUwNDE1MzYxNlow
+# AwIBHqCBhqSBgzCBgDELMAkGA1UEBhMCVVMxHTAbBgNVBAoTFFN5bWFudGVjIENv
+# cnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYD
+# VQQDEyhTeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIFNpZ25lciAtIEczoIIK
+# izCCBTgwggQgoAMCAQICEHsFsdRJaFFE98mJ0pwZnRIwDQYJKoZIhvcNAQELBQAw
+# gb0xCzAJBgNVBAYTAlVTMRcwFQYDVQQKEw5WZXJpU2lnbiwgSW5jLjEfMB0GA1UE
+# CxMWVmVyaVNpZ24gVHJ1c3QgTmV0d29yazE6MDgGA1UECxMxKGMpIDIwMDggVmVy
+# aVNpZ24sIEluYy4gLSBGb3IgYXV0aG9yaXplZCB1c2Ugb25seTE4MDYGA1UEAxMv
+# VmVyaVNpZ24gVW5pdmVyc2FsIFJvb3QgQ2VydGlmaWNhdGlvbiBBdXRob3JpdHkw
+# HhcNMTYwMTEyMDAwMDAwWhcNMzEwMTExMjM1OTU5WjB3MQswCQYDVQQGEwJVUzEd
+# MBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVj
+# IFRydXN0IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3Rh
+# bXBpbmcgQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC7WZ1ZVU+d
+# jHJdGoGi61XzsAGtPHGsMo8Fa4aaJwAyl2pNyWQUSym7wtkpuS7sY7Phzz8LVpD4
+# Yht+66YH4t5/Xm1AONSRBudBfHkcy8utG7/YlZHz8O5s+K2WOS5/wSe4eDnFhKXt
+# 7a+Hjs6Nx23q0pi1Oh8eOZ3D9Jqo9IThxNF8ccYGKbQ/5IMNJsN7CD5N+Qq3M0n/
+# yjvU9bKbS+GImRr1wOkzFNbfx4Dbke7+vJJXcnf0zajM/gn1kze+lYhqxdz0sUvU
+# zugJkV+1hHk1inisGTKPI8EyQRtZDqk+scz51ivvt9jk1R1tETqS9pPJnONI7rtT
+# DtQ2l4Z4xaE3AgMBAAGjggF3MIIBczAOBgNVHQ8BAf8EBAMCAQYwEgYDVR0TAQH/
+# BAgwBgEB/wIBADBmBgNVHSAEXzBdMFsGC2CGSAGG+EUBBxcDMEwwIwYIKwYBBQUH
+# AgEWF2h0dHBzOi8vZC5zeW1jYi5jb20vY3BzMCUGCCsGAQUFBwICMBkaF2h0dHBz
+# Oi8vZC5zeW1jYi5jb20vcnBhMC4GCCsGAQUFBwEBBCIwIDAeBggrBgEFBQcwAYYS
+# aHR0cDovL3Muc3ltY2QuY29tMDYGA1UdHwQvMC0wK6ApoCeGJWh0dHA6Ly9zLnN5
+# bWNiLmNvbS91bml2ZXJzYWwtcm9vdC5jcmwwEwYDVR0lBAwwCgYIKwYBBQUHAwgw
+# KAYDVR0RBCEwH6QdMBsxGTAXBgNVBAMTEFRpbWVTdGFtcC0yMDQ4LTMwHQYDVR0O
+# BBYEFK9j1sqjToVy4Ke8QfMpojh/gHViMB8GA1UdIwQYMBaAFLZ3+mlIR59TEtXC
+# 6gcydgfRlwcZMA0GCSqGSIb3DQEBCwUAA4IBAQB16rAt1TQZXDJF/g7h1E+meMFv
+# 1+rd3E/zociBiPenjxXmQCmt5l30otlWZIRxMCrdHmEXZiBWBpgZjV1x8viXvAn9
+# HJFHyeLojQP7zJAv1gpsTjPs1rSTyEyQY0g5QCHE3dZuiZg8tZiX6KkGtwnJj1NX
+# QZAv4R5NTtzKEHhsQm7wtsX4YVxS9U72a433Snq+8839A9fZ9gOoD+NT9wp17MZ1
+# LqpmhQSZt/gGV+HGDvbor9rsmxgfqrnjOgC/zoqUywHbnsc4uw9Sq9HjlANgCk2g
+# /idtFDL8P5dA4b+ZidvkORS92uTTw+orWrOVWFUEfcea7CMDjYUq0v+uqWGBMIIF
+# SzCCBDOgAwIBAgIQe9Tlr7rMBz+hASMEIkFNEjANBgkqhkiG9w0BAQsFADB3MQsw
+# CQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNV
+# BAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFudGVjIFNI
+# QTI1NiBUaW1lU3RhbXBpbmcgQ0EwHhcNMTcxMjIzMDAwMDAwWhcNMjkwMzIyMjM1
+# OTU5WjCBgDELMAkGA1UEBhMCVVMxHTAbBgNVBAoTFFN5bWFudGVjIENvcnBvcmF0
+# aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYDVQQDEyhT
+# eW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIFNpZ25lciAtIEczMIIBIjANBgkq
+# hkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArw6Kqvjcv2l7VBdxRwm9jTyB+HQVd2eQ
+# nP3eTgKeS3b25TY+ZdUkIG0w+d0dg+k/J0ozTm0WiuSNQI0iqr6nCxvSB7Y8tRok
+# KPgbclE9yAmIJgg6+fpDI3VHcAyzX1uPCB1ySFdlTa8CPED39N0yOJM/5Sym81kj
+# y4DeE035EMmqChhsVWFX0fECLMS1q/JsI9KfDQ8ZbK2FYmn9ToXBilIxq1vYyXRS
+# 41dsIr9Vf2/KBqs/SrcidmXs7DbylpWBJiz9u5iqATjTryVAmwlT8ClXhVhe6oVI
+# QSGH5d600yaye0BTWHmOUjEGTZQDRcTOPAPstwDyOiLFtG/l77CKmwIDAQABo4IB
+# xzCCAcMwDAYDVR0TAQH/BAIwADBmBgNVHSAEXzBdMFsGC2CGSAGG+EUBBxcDMEww
+# IwYIKwYBBQUHAgEWF2h0dHBzOi8vZC5zeW1jYi5jb20vY3BzMCUGCCsGAQUFBwIC
+# MBkaF2h0dHBzOi8vZC5zeW1jYi5jb20vcnBhMEAGA1UdHwQ5MDcwNaAzoDGGL2h0
+# dHA6Ly90cy1jcmwud3Muc3ltYW50ZWMuY29tL3NoYTI1Ni10c3MtY2EuY3JsMBYG
+# A1UdJQEB/wQMMAoGCCsGAQUFBwMIMA4GA1UdDwEB/wQEAwIHgDB3BggrBgEFBQcB
+# AQRrMGkwKgYIKwYBBQUHMAGGHmh0dHA6Ly90cy1vY3NwLndzLnN5bWFudGVjLmNv
+# bTA7BggrBgEFBQcwAoYvaHR0cDovL3RzLWFpYS53cy5zeW1hbnRlYy5jb20vc2hh
+# MjU2LXRzcy1jYS5jZXIwKAYDVR0RBCEwH6QdMBsxGTAXBgNVBAMTEFRpbWVTdGFt
+# cC0yMDQ4LTYwHQYDVR0OBBYEFKUTAamfhcwbbhYeXzsxqnk2AHsdMB8GA1UdIwQY
+# MBaAFK9j1sqjToVy4Ke8QfMpojh/gHViMA0GCSqGSIb3DQEBCwUAA4IBAQBGnq/w
+# uKJfoplIz6gnSyHNsrmmcnBjL+NVKXs5Rk7nfmUGWIu8V4qSDQjYELo2JPoKe/s7
+# 02K/SpQV5oLbilRt/yj+Z89xP+YzCdmiWRD0Hkr+Zcze1GvjUil1AEorpczLm+ip
+# Tfe0F1mSQcO3P4bm9sB/RDxGXBda46Q71Wkm1SF94YBnfmKst04uFZrlnCOvWxHq
+# calB+Q15OKmhDc+0sdo+mnrHIsV0zd9HCYbE/JElshuW6YUI6N3qdGBuYKVWeg3I
+# RFjc5vlIFJ7lv94AvXexmBRyFCTfxxEsHwA/w0sUxmcczB4Go5BfXFSLPuMzW4IP
+# xbeGAk5xn+lmRT92MYICWjCCAlYCAQEwgYswdzELMAkGA1UEBhMCVVMxHTAbBgNV
+# BAoTFFN5bWFudGVjIENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVz
+# dCBOZXR3b3JrMSgwJgYDVQQDEx9TeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5n
+# IENBAhB71OWvuswHP6EBIwQiQU0SMAsGCWCGSAFlAwQCAaCBpDAaBgkqhkiG9w0B
+# CQMxDQYLKoZIhvcNAQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTIwMDUwNDE1MzYxNlow
+# LwYJKoZIhvcNAQkEMSIEIAkVTzn8lt4DF2QZ5Wix+wVuPUYBoL8ewbLLpPdzW4RM
+# MDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIEIMR0znYAfQI5Tg2l5N58FMaA+eKCATz+
+# 9lPvXbcf32H4MAsGCSqGSIb3DQEBAQSCAQCUktxcqSgxgNgVlGotUlspQC0XkKL+
+# R34tgEAXwa0UPG1TwMKF8VOvUCIwwqt0OXPwtVMN3jBMdpiwb0F93UCX1OfglbN4
+# oGFPYgCr5HfgccUgjVMFl4nEEN8adyxdwQOytfcpHsoJFoJt+uXdhE0VD3lh8Rwm
+# MoJVpxh6G2BETqaP94YdTGFT6nDjOM57Qw6ztG17+0hi02jm5N92OZCtE+heYGFy
+# t/9lAUuXtI8nftLm5c6f1w62xjsAdTu9rDh8Gy+hArTUssdMW6JzxvVB79Tn7Kkq
+# 5wPVUiAp6IYkCALC9nvfETzK3xI2sZWj4HFJhKRR0Je5jpYyW32LeRsJ
 # SIG # End signature block
