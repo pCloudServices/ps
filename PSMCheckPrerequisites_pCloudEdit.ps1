@@ -17,7 +17,7 @@ Param([switch]$OutOfDomain)
 ## configuration
 ##############################################################
 
-$versionNumber = "8"
+$versionNumber = "9"
 
 ## list of checks to be performed.
 $arrCheckPrerequisites = @(
@@ -68,8 +68,7 @@ Set-ExecutionPolicy RemoteSigned -Force
 Function GetListofDCsAndTestBindAccount()
 {
 $UserPrincipal = DomainUser
-if($UserPrincipal.ContextType -eq "Domain"){
-
+if(($UserPrincipal.ContextType -eq "Domain") -and (!(Test-Path "$PSScriptRoot\DCInfo.txt"))){
 
 function listControllers
 {
@@ -79,8 +78,6 @@ $dclist = netdom query /D:$Domain dc | Select-Object -SkipLast 2 | Select-Object
 return $dclist
 }
 
-
-
 function Test-LDAPPorts {
     [CmdletBinding()]
     param(
@@ -88,7 +85,7 @@ function Test-LDAPPorts {
         [int] $Port
     )
 
-    Remove-Item "$PSScriptRoot\DCInfo.txt" -Force -ErrorAction SilentlyContinue
+        Remove-Item "$PSScriptRoot\DCInfo.txt" -Force -ErrorAction SilentlyContinue
 
         try {
             $LDAP = "LDAP://" + $ServerName + ':' + $Port
@@ -121,7 +118,6 @@ Function Test-LDAP {
     $ComputerName = listControllers
     }
 
-
     # Checks for ServerName - Makes sure to convert IPAddress to DNS
     foreach ($Computer in $ComputerName) {
         [Array] $ADServerFQDN = (Resolve-DnsName -Name $Computer -ErrorAction SilentlyContinue)
@@ -141,8 +137,6 @@ Function Test-LDAP {
         $ConnectionLDAPS = Test-LDAPPorts -ServerName $ServerName -Port $PortLDAPS -WarningAction SilentlyContinue
         $ConnectionLDAP = Test-LDAPPorts -ServerName $ServerName -Port $PortLDAP -WarningAction SilentlyContinue
 
-
-        
         #if Variable holds $true then print it's port out and sort it in a table.
         $PortsThatWork = @(
             if ($GlobalCatalogNonSSL) { $GCPortLDAP }
@@ -159,16 +153,11 @@ Function Test-LDAP {
             LDAPS              = $ConnectionLDAPS
             AvailablePorts     = $PortsThatWork -join ','
         }
-
     }
 }
-
-
+Write-Host -ForegroundColor Cyan "Below DC Info will be printed once and stored in local file `"DCInfo.txt`"."
+Write-Host -ForegroundColor Cyan "Delete the file if you want to perform this check again."
 Test-LDAP |format-table| Tee-Object -file "$PSScriptRoot\DCInfo.txt"
-
-
-
-
 }
 }
 
@@ -199,14 +188,14 @@ function OSVersion()
     $errorMsg = ""
     $result = $false
     
-    If($actual -Like '*2016*')
+    If($actual -Like '*2016*' -or $actual -like '*2019*')
     {
         $result = $true
     }
 
     elseif($actual -Like '*2012 R2*')
     {
-        $errorMsg = "Privileged Cloud installation must be run on Windows Server 2016."   
+        $errorMsg = "Privileged Cloud installation must be run on Windows Server 2016/2019."   
         $result = $true   
     }
     
@@ -216,7 +205,7 @@ function OSVersion()
     }
 
     [PsCustomObject]@{
-        expected = "Windows Server 2016";
+        expected = "Windows Server 2016/2019";
         actual = $actual;
         errorMsg = $errorMsg;
         result = $result;
@@ -1211,8 +1200,10 @@ function  Memory()
     $actual = ""
     $result = $false
     $errorMsg = ""
+    $Memory = [math]::Round(((Get-CimInstance CIM_PhysicalMemory).Capacity | Measure-Object -Sum).Sum / 1GB, 2)
+    $MemoryAWS = [math]::Round((Get-CimInstance -ClassName CIM_ComputerSystem).TotalPhysicalMemory / 1GB, 0)
     
-    if (((Get-CimInstance CIM_PhysicalMemory).Capacity | Measure-Object -Sum).Sum / (1024 * 1024 * 1024) -ge 8)
+    if ($Memory -ge 8 -or $MemoryAWS -ge 8)
     {
           $actual = "True"
           $result = $true
@@ -1389,8 +1380,8 @@ Write-Host "Couldn't check for new script version, resuming in offline mode" -Fo
 # SIG # Begin signature block
 # MIIfdgYJKoZIhvcNAQcCoIIfZzCCH2MCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBs3sOKOZM1qlXl
-# fsdY6COgFp9x8VYKN4iROD9D4IZcjaCCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBDS0qGZyj0dO9p
+# HHMk8RujVdbTvdtOZsoH1XdJ49yTpqCCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
 # NStkZdZqMA0GCSqGSIb3DQEBCwUAMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBH
 # bG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9i
 # YWxTaWduIFJvb3QgQ0EwHhcNMTgwOTE5MDAwMDAwWhcNMjgwMTI4MTIwMDAwWjBM
@@ -1472,17 +1463,17 @@ Write-Host "Couldn't check for new script version, resuming in offline mode" -Fo
 # O0dsb2JhbFNpZ24gRXh0ZW5kZWQgVmFsaWRhdGlvbiBDb2RlU2lnbmluZyBDQSAt
 # IFNIQTI1NiAtIEczAgwhXYQh+9kPSKH6QS4wDQYJYIZIAWUDBAIBBQCgfDAQBgor
 # BgEEAYI3AgEMMQIwADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEE
-# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgXlE2SSNPTHGV
-# al3dhUgASHxqwiwz5W+e2Ox2DP7oahYwDQYJKoZIhvcNAQEBBQAEggEAFHI2NUYP
-# cyAkY5i0j/Zd5upzaxXg65ydAUj8PHyHISVCfbnRkuDbHRgjglbcEX+eXMToOOQG
-# 4sAmOonKwvJdLAserdAFPBVZ5OGm71C2MkEQw778wJkYtR4KV888Otp2JuuZzb4h
-# epP52XiTNt5F+tKsn/h4+jlLkAu2AsmvcS0fA/Ulpi9c6PyZ2hwv6ecY/WLluyjd
-# gow3SseEcWA/XqCARxcNgpPSCliBKyfdsXxf4CqZJUWngjaDjASjNndmbj2SgMJn
-# eLE7CKtMUFRSqYo0aB1NlPwXtmbMRJ5IDOND6jDYdreZC4jKDmV2wAHetdDxWatl
-# 5Rp2h5u0TXDPN6GCDiwwgg4oBgorBgEEAYI3AwMBMYIOGDCCDhQGCSqGSIb3DQEH
+# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgzM3UVhdyz5nn
+# CYC25H8bIN4tjJssp6W8iguFgnCn/uYwDQYJKoZIhvcNAQEBBQAEggEAfbx8bNoO
+# 8rorCxQQKh81fb2mDFkkIXVFKaVDpgEXnXFlpgosk/8cPCNE12vN2gpnrEJdj6Xy
+# 41ICAV8rR8/mfYRMr6lOdrkJEEvo07DGdowXgCJmBNCVSXBqIBb30Bob0j4zfSbl
+# /8U4B8eI5QF3NcpJ7BMjqK/BuaZRpb0UQY0J/2f8+5JDLZ4TlgAS3Vd43cklBvJR
+# 7pOrxoHHMbQOw0VHN4+ZwM2uUoP6vQiowp6dgvWGB8r+rRwoGjGnrjBsBdiklGzk
+# /SFueYUgdiy3PaoUo+0/ZPdSE7e3eGTTVjNUlKhgauytDRNBk1z6iN9CCOgW4wR3
+# OA2rVA9lv37TlKGCDiwwgg4oBgorBgEEAYI3AwMBMYIOGDCCDhQGCSqGSIb3DQEH
 # AqCCDgUwgg4BAgEDMQ0wCwYJYIZIAWUDBAIBMIH/BgsqhkiG9w0BCRABBKCB7wSB
-# 7DCB6QIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBRihzTf2zXiMdBwGyUI
-# 5TID5X3GhAIVAKFjlOUHNub0btyqm85N4hflXJtyGA8yMDIwMDUwNDE1MzYxNlow
+# 7DCB6QIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBQFS75sPbp8X2lRadT6
+# VGkmUM8ggQIVAKgpv8+HgDlbPiyE+s9ENCWc7VmnGA8yMDIwMDUxNDEwNDAzMlow
 # AwIBHqCBhqSBgzCBgDELMAkGA1UEBhMCVVMxHTAbBgNVBAoTFFN5bWFudGVjIENv
 # cnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYD
 # VQQDEyhTeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIFNpZ25lciAtIEczoIIK
@@ -1546,13 +1537,13 @@ Write-Host "Couldn't check for new script version, resuming in offline mode" -Fo
 # BAoTFFN5bWFudGVjIENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVz
 # dCBOZXR3b3JrMSgwJgYDVQQDEx9TeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5n
 # IENBAhB71OWvuswHP6EBIwQiQU0SMAsGCWCGSAFlAwQCAaCBpDAaBgkqhkiG9w0B
-# CQMxDQYLKoZIhvcNAQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTIwMDUwNDE1MzYxNlow
-# LwYJKoZIhvcNAQkEMSIEIAkVTzn8lt4DF2QZ5Wix+wVuPUYBoL8ewbLLpPdzW4RM
+# CQMxDQYLKoZIhvcNAQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTIwMDUxNDEwNDAzMlow
+# LwYJKoZIhvcNAQkEMSIEIM9FUjIGtPOY2L35ki1/Y3VlGwBxFS/VJu1TgYJSkYiC
 # MDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIEIMR0znYAfQI5Tg2l5N58FMaA+eKCATz+
-# 9lPvXbcf32H4MAsGCSqGSIb3DQEBAQSCAQCUktxcqSgxgNgVlGotUlspQC0XkKL+
-# R34tgEAXwa0UPG1TwMKF8VOvUCIwwqt0OXPwtVMN3jBMdpiwb0F93UCX1OfglbN4
-# oGFPYgCr5HfgccUgjVMFl4nEEN8adyxdwQOytfcpHsoJFoJt+uXdhE0VD3lh8Rwm
-# MoJVpxh6G2BETqaP94YdTGFT6nDjOM57Qw6ztG17+0hi02jm5N92OZCtE+heYGFy
-# t/9lAUuXtI8nftLm5c6f1w62xjsAdTu9rDh8Gy+hArTUssdMW6JzxvVB79Tn7Kkq
-# 5wPVUiAp6IYkCALC9nvfETzK3xI2sZWj4HFJhKRR0Je5jpYyW32LeRsJ
+# 9lPvXbcf32H4MAsGCSqGSIb3DQEBAQSCAQBLuW+Yq5Yd6Wo2LWYzLAyZ+5PyMao+
+# ZDZMmMqMV/OYmm38jqbcpE6wI+/uMiW3N607V3/ikbNZy8qhr+0i9YvD5sMBZf4V
+# 4Ox3VI5Z57JcTAv0G71ev7TQRRI9sRKb1ijEiRSdVqL7ZY4G3CMbDx8yTIc5peE3
+# 5Nzh8RcDUnRP3qBst2VFNAZFuu+246R/OpkQmzC7cbc5D/IqwhYY92LUZO85TJc6
+# 2o6QsPn44IiLIAXSXlLnK2XRRmb5BhaPFvuXoYiEMhVShHKxzZ5pCz58kll1noDT
+# ziNKqm+4ZJSzo/Y2EVqCISf+01dptIdTGFP0+jNFecLZEBzIcJ2d2W6m
 # SIG # End signature block
