@@ -1,1 +1,1 @@
-10 -or [int]$checkVersion -gt $versionNumber
+10 -or [int]10 -gt 9
