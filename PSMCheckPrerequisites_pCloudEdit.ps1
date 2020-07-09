@@ -6,25 +6,32 @@
   .EXAMPLE1 
   PS C:\> .\PSMCheckPrerequisites.ps1
   
-  .EXAMPLE2
+  .EXAMPLE2 - Run checks if machine is out of domain
   PS C:\> .\PSMCheckPrerequisites.ps1 -OutOfDomain
+
+  .EXAMPLE2 - Troubleshoot certain components
+  PS C:\> .\PSMCheckPrerequisites.ps1 -Troubleshooting
   
 #>
 
 [cmdletbinding()]
-Param([switch]$OutOfDomain)
+Param(
+[switch]$OutOfDomain,
+[switch]$Troubleshooting
+)
 
 ## configuration
 ##############################################################
 
-[int]$versionNumber = "10"
+[int]$versionNumber = "11"
 
 ## list of checks to be performed.
 $arrCheckPrerequisites = @(
 "VaultConnectivity",
 "TunnelConnectivity",
 "CustomerPortalConnectivity",
-"ConsoleConnectivity",
+"ConsoleNETConnectivity",
+"ConsoleHTTPConnectivity",
 "CRLConnectivity",
 "OSVersion",
 "Processors",
@@ -34,6 +41,7 @@ $arrCheckPrerequisites = @(
 "KBs",
 "IPV6",
 "PSRemoting",
+"CheckNoRDS",
 "DomainUser",
 "PendingRestart",
 "NotAzureADJoinedOn2019",
@@ -58,13 +66,97 @@ $global:table = ""
 $SEPARATE_LINE = "------------------------------------------------------------------------" 
 $skip = "SKIP"
 
-Function SetExecPolicy(){
-$ep = Get-ExecutionPolicy
-if ($ep -ne "Bypass")
+Function BindAccount{
+Function Connect-LDAPS(){
+    [CmdletBinding()]
+    param(
+        [parameter(Mandatory=$false)][string] $hostname = (Read-Host -Prompt "Enter Hostname (eg; cyberarkdemo.com)"),
+        [parameter(Mandatory=$false)][int] $Port = (read-host -Prompt "Enter Port($("636"))"),
+        [parameter(Mandatory=$false)][string] $username = (Read-Host -Prompt "Enter Username (eg; svc_cyberark)")
+    )
+    
+#$username = Read-Host "Bind Account Username (eg; svc_cyberark)"
+#$hostname = Read-Host "DC server (eg; cyberarkdemo.com)"
+#$Port = Read-Host "Port (eg; 636, 3269)"
+
+if ($Port -eq 0){$port = 636}
+
+$Null = [System.Reflection.Assembly]::LoadWithPartialName("System.DirectoryServices.Protocols")
+#Connects to LDAP
+$LDAPConnect = New-Object System.DirectoryServices.Protocols.LdapConnection $HostName`:$Port
+
+#Set session options (SSL + LDAP V3)
+$LDAPConnect.SessionOptions.SecureSocketLayer = $true
+$LDAPConnect.SessionOptions.ProtocolVersion = 3
+
+# Pick Authentication type:
+# Anonymous, Basic, Digest, DPA (Distributed Password Authentication),
+# External, Kerberos, Msn, Negotiate, Ntlm, Sicily
+$LDAPConnect.AuthType = [System.DirectoryServices.Protocols.AuthType]::Basic
+
+# Gets username and password.
+$credentials = new-object "System.Net.NetworkCredential" -ArgumentList $UserName,(Read-Host "Password" -AsSecureString)
+# Bind with the network credentials. Depending on the type of server,
+# the username will take different forms.
+Try {
+$ErrorActionPreference = 'Stop'
+$LDAPConnect.Bind($credentials)
+$ErrorActionPreference = 'Continue'
+}
+Catch {
+Throw "Error binding to ldap  - $($_.Exception.Message)"
+}
+
+
+Write-Verbose "Successfully bound to LDAP!" -Verbose
+$basedn = "DC=cyberarkdemo,DC=com"
+$scope = [System.DirectoryServices.Protocols.SearchScope]::Base
+#Null returns all available attributes
+$attrlist = $null
+$filter = "(objectClass=*)"
+
+$ModelQuery = New-Object System.DirectoryServices.Protocols.SearchRequest -ArgumentList $basedn,$filter,$scope,$attrlist
+
+#$ModelRequest is a System.DirectoryServices.Protocols.SearchResponse
+Try {
+$ErrorActionPreference = 'Stop'
+$ModelRequest = $LDAPConnect.SendRequest($ModelQuery) 
+$ErrorActionPreference = 'Continue'
+}
+Catch {
+Throw "Problem looking up model account - $($_.Exception.Message)"
+}
+
+$ModelRequest
+}
+
+function Show-Menu
 {
-Set-ExecutionPolicy RemoteSigned -Force
+    Clear-Host
+    Write-Host "================ Troubleshooting Guide ================"
+    
+    Write-Host "1: Press '1' to Test LDAPS Bind Account" -ForegroundColor Green
+    Write-Host "Q: Press 'Q' to quit."
 }
-}
+
+do
+ {
+     Show-Menu
+     $selection = Read-Host "Please select an option"
+     switch ($selection)
+     {
+         '1' {
+              Connect-LDAPS
+             }
+
+
+         
+     }
+     pause
+ }
+ until ($selection -eq 'q')
+ exit
+ }
 
 Function GetListofDCsAndTestBindAccount()
 {
@@ -180,6 +272,32 @@ Else
 {
 Write-Host "Couldn't grab Public IP for you, you'll have to do it manually"
 }
+}
+
+Function CheckNoRDS()
+{
+    $expected = "False"
+    $actual = (Get-WindowsFeature Remote-Desktop-Services).InstallState -eq "Installed"
+    $errorMsg = ""
+    $result = $false
+    
+    If($actual)
+    {
+        $result = $false
+        $errorMsg = "RDS shouldn't be deployed before CyberArk is installed, remove RDS role and make sure there are no domain level GPO RDS settings applied (rsop.msc). Please note, after you remove RDS and restart you may need to use 'mstsc /admin' to connect back to the machine."
+    }
+    else
+    {
+        $result = $expected
+    }
+
+    [PsCustomObject]@{
+        expected = $expected;
+        actual = $actual;
+        errorMsg = $errorMsg;
+        result = $result;
+    }
+
 }
 
 function OSVersion()
@@ -754,7 +872,7 @@ function AddLineToReport($action, $resultObject)
         $line = "$mark $actionPad $errMessage"
         if($errMessage-ne "")
         {
-            WriteLogW $scriptName $line $true 
+            WriteLogW $scriptName $line $true
         }
         else
         { 
@@ -765,7 +883,7 @@ function AddLineToReport($action, $resultObject)
     {
         $mark = '[X]'
         $line = "$mark $actionPad $errMessage"
-        WriteLogE $scriptName $line $true 
+        WriteLogE $scriptName $line $true
     }
 
 }
@@ -854,7 +972,7 @@ function CheckPrerequisites()
 			WriteLogI $scriptName "Checking Prerequisites completed with $errorCnt $errorStr and $warnCnt $warnStr " $true
 
             WriteLogI $scriptName "$SEPARATE_LINE" $true
-            $global:table | Format-Table  
+            $global:table | Format-Table  -Wrap
 
             $table = $global:table | Out-String      
             WriteLogI $scriptName $table $false 
@@ -1052,7 +1170,7 @@ $TunnelIP = Read-Host "Please enter your TunnelConnector IP Address (Leave empty
     }
 
 
-Function ConsoleConnectivity()
+Function ConsoleNETConnectivity()
 {
 $expected = "True"
 $actual = ""
@@ -1078,6 +1196,46 @@ $ConsoleIP = "console.privilegecloud.cyberark.com"
         result = $result;
     }
     }
+
+Function ConsoleHTTPConnectivity()
+{
+$expected = "39"
+$actual = ""
+$result = $false
+$errorMsg = ""
+
+
+
+$CustomerGenericGET = 0
+Try{
+$CustomerGenericGET = Invoke-RestMethod -Uri "https://console.privilegecloud.cyberark.com/connectorConfig/v1?customerId=35741f0e-71fe-4c1a-97c8-28594bf1281d&configItem=environmentFQDN" -TimeoutSec 20 -ContentType 'application/json'
+$actual = $CustomerGenericGET.config.environmentFQDN.attributes.environmentFQDN.Length
+
+    If($actual -eq 39)
+    {
+        $result = $true
+    }
+    }
+    catch 
+    {
+    if ($Error[0].Exception.Message -eq "Unable to connect to the remote server"){
+    $errorMsg = "Unable to connect to the remote server - Unable to GET to https://console.privilegecloud.cyberark.com/connectorConfig/v1?customerId=35741f0e-71fe-4c1a-97c8-28594bf1281d&configItem=environmentFQDN"
+    $result = $false
+    }
+    if ($Error[0].Exception.Message -eq "The underlying connection was closed: An unexpected error occurred on a receive."){
+    $errorMsg = "The underlying connection was closed - Unable to GET to https://console.privilegecloud.cyberark.com/connectorConfig/v1?customerId=35741f0e-71fe-4c1a-97c8-28594bf1281d&configItem=environmentFQDN"
+    $result = $false
+    }
+    }
+    
+
+        [PsCustomObject]@{
+        expected = $expected;
+        actual = $actual;
+        errorMsg = $errorMsg;
+        result = $result;
+    }
+}
 
 Function CRLConnectivity()
 {
@@ -1372,6 +1530,9 @@ Write-Host "Couldn't check for new script version, resuming in offline mode" -Fo
 ###########################################################################################
 
 
+    #troubleshooting section
+    if ($Troubleshooting){BindAccount}
+
 	Try
 	{	
         InitLogfileHeaderAndSetLogParams 'CheckPrerequisites'
@@ -1407,11 +1568,12 @@ Write-Host "Couldn't check for new script version, resuming in offline mode" -Fo
 ###########################################################################################	
 
 
+
 # SIG # Begin signature block
 # MIIfdQYJKoZIhvcNAQcCoIIfZjCCH2ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCkp/XVZUmCRO6r
-# Xrg+xP0jz/9ow/iDCHbMlqiLhL3i2aCCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCA48ECGYZqt5n2R
+# 9Y8VVz+oG8dplSrSZcb5mad/B9afEqCCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
 # NStkZdZqMA0GCSqGSIb3DQEBCwUAMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBH
 # bG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9i
 # YWxTaWduIFJvb3QgQ0EwHhcNMTgwOTE5MDAwMDAwWhcNMjgwMTI4MTIwMDAwWjBM
@@ -1493,17 +1655,17 @@ Write-Host "Couldn't check for new script version, resuming in offline mode" -Fo
 # O0dsb2JhbFNpZ24gRXh0ZW5kZWQgVmFsaWRhdGlvbiBDb2RlU2lnbmluZyBDQSAt
 # IFNIQTI1NiAtIEczAgwhXYQh+9kPSKH6QS4wDQYJYIZIAWUDBAIBBQCgfDAQBgor
 # BgEEAYI3AgEMMQIwADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEE
-# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgGrfGb+0Mdr5F
-# 7g+0Hih3E6daFrVD3pcL/+3pl3q+XAwwDQYJKoZIhvcNAQEBBQAEggEAYHpp6WUh
-# 4Y4JY3U4eTPUUicT34QZelgdQ406dPTxef8GGMu81tX1WWy6oYhG1PLeMHk6FqOy
-# h4TxhU9BykTC96qL9zRZ6WvLaT3dmZ2TLgmuIM3cuARMq/TOKoHldJTOm46ET9TD
-# hCpoWZrCOVcVfrzs0e/dUI81cqCBi44IButaydK41wGOZvrptAb+dYlVJ/1lBthQ
-# +sOgpQ19/t5lQmpX8WUqc6dIrfO9Ict5xGiKDc0vhScpvb8T7YkOh5mWo3TQPX2D
-# 2GrRqbH1D64GXzLNI/M92jp0mxqITDwmDWwIyf2otsUMwGdiQQo7k5McYSBXIXiI
-# VfTEFhFTQHD7eaGCDiswgg4nBgorBgEEAYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEH
+# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgaAj818bBfQbT
+# JintMs6GuDKCvCFsELgBtrDZSlYIqU8wDQYJKoZIhvcNAQEBBQAEggEAlkQZAFLe
+# MvA03GpZrcecwNnhLSYJ6nB+RB/s78+NyR5CQZjxXyPoTmbrdomQgDMaYdPazA9F
+# 8shFGRId2N9/dXaShOXRTJgK+/RwCkldzRI+6cIHdJ9qUaIP/RUQQQ7rC7yhF2ns
+# 98lKluEqwlQvtENTqtLtIX8XvPtMUj/RMyxPCy0vyWJA6NnP6Wn+dsFuDbQ79krD
+# wkdi8juyN+vR0dastgBMJb+E96/PG32yiqQaSnf+y6siAygl7pU8CczhoZZ35mYE
+# hZ3ZWLF8HMcf3S9UtePhuW6WJ50cQeh9HFeOwZrrqhlgRV0oXPDmFGS3iTsROTyp
+# o7QU1DXFGs7JfqGCDiswgg4nBgorBgEEAYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEH
 # AqCCDgQwgg4AAgEDMQ0wCwYJYIZIAWUDBAIBMIH+BgsqhkiG9w0BCRABBKCB7gSB
-# 6zCB6AIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBTbA16P2e0wIQXpRVFE
-# aKu0vxA+YgIUZTH4Em8WePnn8QSocyOXuq8SSvUYDzIwMjAwNjA4MTUzNTU3WjAD
+# 6zCB6AIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBSR6qM4s71p+SCcUg+J
+# sXEW4rOrkwIUeGnnZdNjPrN5R2mOFRwp+W2KvvoYDzIwMjAwNzA5MDYxODU5WjAD
 # AgEeoIGGpIGDMIGAMQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29y
 # cG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNV
 # BAMTKFN5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzOgggqL
@@ -1567,13 +1729,13 @@ Write-Host "Couldn't check for new script version, resuming in offline mode" -Fo
 # ChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0
 # IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcg
 # Q0ECEHvU5a+6zAc/oQEjBCJBTRIwCwYJYIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJ
-# AzENBgsqhkiG9w0BCRABBDAcBgkqhkiG9w0BCQUxDxcNMjAwNjA4MTUzNTU3WjAv
-# BgkqhkiG9w0BCQQxIgQg1zSi/Eq/qlwehA2Cjl8uNrqkFsqIQv/4MYx9OHpqbMQw
+# AzENBgsqhkiG9w0BCRABBDAcBgkqhkiG9w0BCQUxDxcNMjAwNzA5MDYxODU5WjAv
+# BgkqhkiG9w0BCQQxIgQgw9dkgnozC0bfJMbD7HW4wvg4qs+WYh2/xtFuOv6LQMww
 # NwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQgxHTOdgB9AjlODaXk3nwUxoD54oIBPP72
-# U+9dtx/fYfgwCwYJKoZIhvcNAQEBBIIBAE8cpPGdU9wiuWJ+TYktaSAvww0k0vSf
-# x1OjXPxr6pfim/dI+Q0upwNvAxDV1Py+YuRPy7BdQbwlGBMRzl1npJCCO2rAzLfG
-# Gz1UaT+Iag/ulR7bMM/h6e1+7OgP1bXoF3J0Gh4XbKfec4f13PKvAFZuds/JctHh
-# xB4g7zvkVEYS/A9AOCncEdGxOTjILqTsS8sWRXYtmabL5G9yWQJ94BjrDPZ5z4xn
-# I5tYYT5svwNpUbdwO5fDGn440IfMQJEgliZvjGhJrWEPiXb6lhwK9A3pWEufN67y
-# 2u3CipslFeObsx8ymNMnNH40lzWnjc1Hzlod3SeOPuqrSPq+HFehkzg=
+# U+9dtx/fYfgwCwYJKoZIhvcNAQEBBIIBAEHHHwAjq2hIzycCLhGc6mNBGGI5pWW3
+# dtDQExMsIuCLb0Wh5r4dlDPBbjS04fiCuJHv8MQnjc43dEOHYmbkM/EsOUUX2oeL
+# jtPY24yM8JwU7pWQ/cTcWK+ANQFtMTkIsbKATMHY6WsWfOdxWk0fkxRqF6qW4gm7
+# ebCgUTuX9yKGahiNR7YTJw0Bti9DZ+CwyugG0sd1RvhPSujBGf6ArtbKu2WVGcIH
+# PS8lRSDOZHAYkHp9NqWX0L/qJnIzvdoyWQul3OK0WvsOFh9N1MMEtifxAaUWwlSr
+# NxxBtaU1wTUAWaRVrX5T9Mp14t8+UaKTtKPFt6oMDU4XoVhYnitBPN0=
 # SIG # End signature block
