@@ -92,7 +92,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 # ------ SET Files and Folders Paths ------
 # Set Log file path
 $global:LOG_DATE = $(get-date -format yyyyMMdd) + "-" + $(get-date -format HHmmss)
-$global:LOG_FILE_PATH = "$ScriptLocation\PrivCloud-CheckPrerequisites-$logDate.log"
+$global:LOG_FILE_PATH = "$ScriptLocation\PrivCloud-CheckPrerequisites-$LOG_DATE.log"
 
 # ------ SET Global Parameters ------
 $global:g_ConsoleIP = "console.privilegecloud.cyberark.com"
