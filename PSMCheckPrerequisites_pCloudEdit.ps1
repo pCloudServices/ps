@@ -91,16 +91,16 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
-$logDate = $(get-date -format yyyyMMdd) + "-" + $(get-date -format HHmmss)
+$global:LOG_DATE = $(get-date -format yyyyMMdd) + "-" + $(get-date -format HHmmss)
 $global:LOG_FILE_PATH = "$ScriptLocation\PrivCloud-CheckPrerequisites-$logDate.log"
 
 # ------ SET Global Parameters ------
-$global:ConsoleIP = "console.privilegecloud.cyberark.com"
+$global:g_ConsoleIP = "console.privilegecloud.cyberark.com"
 $global:g_ScriptName = "PSMCheckPrerequisites_pCloudEdit.ps1"
 
 $global:table = ""
 $SEPARATE_LINE = "------------------------------------------------------------------------" 
-$skip = "SKIP"
+$g_SKIP = "SKIP"
 
 #region Troubleshooting
 Function BindAccount{
@@ -197,7 +197,7 @@ do
 
 Function GetListofDCsAndTestBindAccount()
 {
-$UserPrincipal = DomainUser
+$UserPrincipal = Get-UserPrincipal
 if(($UserPrincipal.ContextType -eq "Domain") -and (!(Test-Path "$PSScriptRoot\DCInfo.txt"))){
 
 function listControllers
@@ -305,10 +305,10 @@ Function GetPublicIP()
 	$PublicIP = ""
 
 	try{
-		Write-LogMessage -Type Info -Msg "Attempting to retrieve Public IP, this can take upto 15 secs."
+		Write-LogMessage -Type Info -Msg "Attempting to retrieve Public IP, this can take up to 15 secs."
 		$PublicIP = (Invoke-WebRequest -Uri ipinfo.io/ip -UseBasicParsing -TimeoutSec 5).Content
-		$PublicIP | Out-File "$env:COMPUTERNAME PublicIP.txt"
-		Write-LogMessage -Type Debug -Msg "Successfully fetched Public IP: $PublicIP and saved it in a local file '$env:COMPUTERNAME PublicIP.txt'"
+		$PublicIP | Out-File "$($env:COMPUTERNAME) PublicIP.txt"
+		Write-LogMessage -Type Debug -Msg "Successfully fetched Public IP: $PublicIP and saved it in a local file '$($env:COMPUTERNAME) PublicIP.txt'"
 		return $PublicIP
 	}
 	catch{
@@ -525,7 +525,7 @@ Function KBs()
 		{
 			if($hotFixes -eq "")
 			{
-				$errorMsg = $skip
+				$errorMsg = $g_SKIP
 				$result =  $true
 			}
 		 
@@ -622,13 +622,12 @@ Function DomainUser()
 		
 		if ($OutOfDomain) 
 		{
-			$errorMsg = $skip
+			$errorMsg = $g_SKIP
 			$result = $true
 		}
 		else
 		{
-			Add-Type -AssemblyName System.DirectoryServices.AccountManagement
-			$UserPrincipal = [System.DirectoryServices.AccountManagement.UserPrincipal]::Current
+			$UserPrincipal = Get-UserPrincipal
 
 			if($UserPrincipal.ContextType -eq "Domain")
 			{
@@ -650,7 +649,6 @@ Function DomainUser()
 			errorMsg = "";
 			result = $result;
 		}
-		#return $UserPrincipal # TODO: Why returning Uer principal?
 	} catch {
 		Throw $(New-Object System.Exception ("DomainUser: Could not verify if user is a Domain user",$_.Exception))
 	}
@@ -703,118 +701,125 @@ Function PendingRestart()
 	}
 }	
 
+# @FUNCTION@ ======================================================================================================================
+# Name...........: UsersLoggedOn
+# Description....: Check how many users are connected to the machine
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
 Function UsersLoggedOn()
 {
-    $expected = "Only one user is logged on"
     $actual = ""
     $errorMsg = ""
     $result = $false
         
-    try { 
-       
-         $computerName = $env:COMPUTERNAME
+	try{
+		Write-LogMessage -Type Debug -Msg "Starting UsersLoggedOn..."
+		
+		$numOfActiveUsers = (query.exe user /server $($env:COMPUTERNAME) | measure).Count
 
-         $ActiveUsers = query.exe user /server $ComputerName
-         $numOfActiveUsers = ($ActiveUsers | measure).Count
-         
-         if($numOfActiveUsers -ne 2)
-         {
-            WriteLogI $scriptName $ActiveUsers $false
-            $errorMsg = "Please see log for details"
-            $actual = "More than one user is logged on"
-            $result = $false
-
-         }
-         else
-         {
-            $actual = $expected
-            $result = $true
-         }
-          
-       
-    }catch{
-    
-        WriteLogE $scriptName "UsersLoggedOn - cannot check if another user is logged on" $false 
-        $errorMsg = $skip
-        $result = $false
-    }
-
-    [PsCustomObject]@{
-        expected = $expected;
-        actual =   $actual;
+		if($numOfActiveUsers -gt 1)
+		{
+			$actual = "More than one user is logged on"
+			Write-LogMessage -Type Warning -Msg $actual
+			$errorMsg = "Please see log for details"
+			$result = $False
+		}
+		else
+		{
+			$actual = "Only one user is logged on"
+			$result = $True
+		}
+	}catch{
+		Write-LogMessage -Type Error -Msg "Cannot check if another user is logged on"
+		$errorMsg = $g_SKIP
+		$result = $false
+	}
+	
+	Write-LogMessage -Type Debug -Msg "Finished UsersLoggedOn"
+	
+    return [PsCustomObject]@{
+        expected = "Only one user is logged on";
+        actual = $actual;
         errorMsg = $errorMsg;
         result = $result;
     }
-
 }	
 
+# @FUNCTION@ ======================================================================================================================
+# Name...........: GPO
+# Description....: Check the GPOs on the machine
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
 Function GPO()
 {
-   $expected = "PSM Compatible"
-   $actual = ""	
-   $errorMsg = ""
-   $result = $false
-   $gpoResult = $false
-   $compatible = $true
+	try{
+		Write-LogMessage -Type Debug -Msg "Starting GPO..."
+		$actual = ""	
+		$errorMsg = ""
+		$result = $false
+		$gpoResult = $false
+		$compatible = $true
 
-   $path = "C:\Windows\temp\GPOReport.xml"
-   gpresult /f /x $path *> $null
-    
-   WriteLogAndReturnCursor ""
-    
-    [xml]$xml = Get-Content $path
+		$path = "C:\Windows\temp\GPOReport.xml"
+		gpresult /f /x $path *> $null
 
-	if($arrGPO.Count -gt 0)
-	{
+		WriteLogAndReturnCursor ""
 
-            ForEach ($gpo in $arrGPO)
-            {
-            	$errorMsg = ""
-            	$GPOValueResult = ReadGPOValue $gpo.Name 
+		[xml]$xml = Get-Content $path
 
-            	if ($GPOValueResult -eq "")
-            	{
-                	$actual = "Not Configured"
-                	$gpoResult = $true
-            	}
-            	else
-            	{
-                	$actual = $GPOValueResult
+		if($arrGPO.Count -gt 0)
+		{
+			ForEach ($gpo in $arrGPO)
+			{
+				$errorMsg = ""
+				$GPOValueResult = ReadGPOValue -gpoXML $xml -gpoName $gpo.Name 
 
-	                $gpoResult =  ($gpo.Expected -eq $GPOValueResult)
+				if ([string]::IsNullOrEmpty($GPOValueResult))
+				{
+					$actual = "Not Configured"
+					$gpoResult = $true
+				}
+				else
+				{
+					$actual = $GPOValueResult
 
-                
-        	        if(-not $gpoResult )
-                	{
-	                    $compatible = $false
-	                    $errorMsg = "Expected:"+$gpo.Expected+"  Actual:"+$actual
-                	}
-            	}
+					$gpoResult = ($gpo.Expected -eq $GPOValueResult)
+					
+					if(-not $gpoResult )
+					{
+						$compatible = $false
+						$errorMsg = "Expected:"+$gpo.Expected+"  Actual:"+$actual
+					}
+				}
 			
-            	$name = "GPO: "+$gpo.Name
-            	$reportObj = @{expected = $gpo.Expected; actual =   $actual; errorMsg = $errorMsg; result = $gpoResult;}
-            	AddLineToReport $name $reportObj
+				$name = "GPO: "+$gpo.Name
+				$reportObj = @{expected = $gpo.Expected; actual =   $actual; errorMsg = $errorMsg; result = $gpoResult;}
+				AddLineToReport $name $reportObj #TODO: Check this method
+			}#loop end
+		}
 
-            }#loop end
+		$errorMsg = $g_SKIP
+		if(!$compatible)
+		{
+			 $actual = "Not Compatible"
+			 $result = $false
+		}
+		else
+		{
+		   $result = $true
+		}
+
+		return [PsCustomObject]@{
+			expected = "PSM Compatible";
+			actual = $actual;
+			errorMsg = $errorMsg;
+			result = $result;
+		}
+	} catch {
+		Throw $(New-Object System.Exception ("GPO: Could not check GPO settings on machine",$_.Exception))
 	}
-
-	$errorMsg = $skip
-    if(!$compatible)
-    {
-         $actual = "Not Compatible"
-         $result = $false
-    }
-    else
-    {
-       $result = $true
-    }
-
-    [PsCustomObject]@{
-        expected = $expected;
-        actual =   $actual;
-        errorMsg = $errorMsg;
-        result = $result;
-    }
 }
 
 # @FUNCTION@ ======================================================================================================================
@@ -850,7 +855,7 @@ Function TunnelConnectivity()
 Function ConsoleNETConnectivity()
 {
 	Write-LogMessage -Type Debug -Msg "Running ConsoleNETConnectivity"
-	return Test-NetConnectivity -ComputerName $ConsoleIP -Port 443
+	return Test-NetConnectivity -ComputerName $g_ConsoleIP -Port 443
 }
 
 # @FUNCTION@ ======================================================================================================================
@@ -870,7 +875,7 @@ Function ConsoleHTTPConnectivity()
 		$CustomerGenericGET = 0
 		Try{
 			#TODO: is it OK that we have here a constant customer ID? should we get he current customer ID?
-			$connectorConfigURL = "https://$ConsoleIP/connectorConfig/v1?customerId=35741f0e-71fe-4c1a-97c8-28594bf1281d&configItem=environmentFQDN"
+			$connectorConfigURL = "https://$g_ConsoleIP/connectorConfig/v1?customerId=35741f0e-71fe-4c1a-97c8-28594bf1281d&configItem=environmentFQDN"
 			$CustomerGenericGET = Invoke-RestMethod -Uri $connectorConfigURL -TimeoutSec 20 -ContentType 'application/json'
 			If($null -ne $CustomerGenericGET)
 			{
@@ -1181,6 +1186,12 @@ Function Test-NetConnectivity
     }
 }
 
+Function Get-UserPrincipal
+{
+	Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+	return [System.DirectoryServices.AccountManagement.UserPrincipal]::Current
+}
+
 # @FUNCTION@ ======================================================================================================================
 # Name...........: IsUserAdmin
 # Description....: Check if the user is a Local Admin
@@ -1256,7 +1267,7 @@ Function WriteLogAndReturnCursor($msg)
     $pos.Y -= 1
     $host.UI.RawUI.CursorPosition =  $pos
 
-    WriteLogI $scriptName $msg $true
+    Write-LogMessage -Type Info -Msg $msg $true
     $pos = $host.UI.RawUI.CursorPosition
     $pos.Y -= 1
     $host.UI.RawUI.CursorPosition =  $pos
@@ -1318,7 +1329,7 @@ Function AddLineToReport($action, $resultObject)
         $line = "$mark $actionPad $errMessage"
         if($errMessage-ne "")
         {
-            WriteLogW $scriptName $line $true
+            Write-LogMessage -Type Warning -Msg $line $true
         }
         else
         { 
@@ -1329,7 +1340,7 @@ Function AddLineToReport($action, $resultObject)
     {
         $mark = '[X]'
         $line = "$mark $actionPad $errMessage"
-        WriteLogE $scriptName $line $true
+        Write-LogMessage -Type Error -Msg $line $true
     }
 
 }
@@ -1341,15 +1352,12 @@ Function CheckPrerequisites()
 	{
 
         $cnt = $arrCheckPrerequisites.Count
-		WriteLogI $scriptName "PSMCheckPrerequisites version:$versionNumber" $true 
-		WriteLogH $scriptName "Checking prerequisites start..." $true 
+		Write-LogMessage -Type Info -SubHeader -Msg "Checking prerequisites start..."
 		
-
         $global:table = @()
         $errorCnt = 0
         $warnCnt = 0
         $table = ""
-
 
 		ForEach ($method in $arrCheckPrerequisites)
         {
@@ -1364,7 +1372,7 @@ Function CheckPrerequisites()
                 }
 
                 WriteLogAndReturnCursor ""
-                WriteLogI $scriptName "End $method" $false             
+                Write-LogMessage -Type Info -Msg "End $method"      
             }
             Catch
             {
@@ -1372,7 +1380,7 @@ Function CheckPrerequisites()
                 $errorCnt++
             }
 
-			if($resultObject.errorMsg -ne $skip)
+			if($resultObject.errorMsg -ne $g_SKIP)
 			{
 				AddLineToReport $method $resultObject
 			}
@@ -1385,7 +1393,7 @@ Function CheckPrerequisites()
             AddLineToTable $method $resultObject
 		}
         
-        WriteLogI $scriptName "`n`n`n`n$SEPARATE_LINE" $true
+        Write-LogMessage -Type Info -Msg "" -Footer
 		
         $errorStr = "";
         $warnStr = "";
@@ -1413,13 +1421,13 @@ Function CheckPrerequisites()
 			}
 
 
-			WriteLogI $scriptName "Checking Prerequisites completed with $errorCnt $errorStr and $warnCnt $warnStr " $true
+			Write-LogMessage -Type Info -Msg "Checking Prerequisites completed with $errorCnt $errorStr and $warnCnt $warnStr " $true
 
-            WriteLogI $scriptName "$SEPARATE_LINE" $true
+            Write-LogMessage -Type Info -Msg "$SEPARATE_LINE" $true
             $global:table | Format-Table  -Wrap
 
             $table = $global:table | Out-String      
-            WriteLogI $scriptName $table $false 
+            Write-LogMessage -Type Info -Msg $table $false 
             
 			
         }
@@ -1428,52 +1436,16 @@ Function CheckPrerequisites()
             WriteLogS $scriptName "Checking Prerequisites completed successfully" $true
         }
 
-        WriteLogI $scriptName "$SEPARATE_LINE" $true
+        Write-LogMessage -Type Info -Msg "$SEPARATE_LINE" $true
 				
 	}
 	Catch
 	{
-		WriteLogE $scriptName "Failed to run CheckPrerequisites" $true 
-		WriteLogE $scriptName  $_.Exception.Message > $null
+		Write-LogMessage -Type Error -Msg "Failed to run CheckPrerequisites" $true 
+		Write-LogMessage -Type Error -Msg  $_.Exception.Message > $null
 		throw ($_.Exception.Message)
 	}
 }
-
-Function InitLogfileHeaderAndSetLogParams ($stageName)
-{
-    $FileHeader = @"
-###########################################################################################
-#
-#                       PSM $stageName PowerShell Script
-#
-#
-#
-#
-# Created : Nov 2019
-# Modified:3/11/2019
-# Version : $versionNumber
-# CyberArk Software Ltd.
-###########################################################################################
-
-"@
-	$logDate = $(get-date -format yyyyMMdd) + "-" + $(get-date -format HHmmss)
-    $logfile = "$env:windir\Temp\PSMCheckPrerequisites$logDate.log"	
-    SetLogParams $logfile "PSM" "" $fileHeader	
-}	
-	
-	
-#logPathParam 		= log file path including filename 
-#componentNameParam = CPM/PVWA/PSM
-#scriptTypeParam    = PO (for post installation) / PR (for pre installation) / IN (for installation) / HA (for hardening)
-#fileHeaderParam    = the header that will be displayed at the top of the logfile
-
-Function SetLogParams([string]$logPathParam, [string]$componentNameParam, [string]$scriptTypeParam, [string]$fileHeaderParam)
-{
-	$global:LogPath = $logPathParam
-	$global:ComponentName = $componentNameParam
-	$global:ScriptType = $scriptTypeParam
-	$global:FileHeader = $fileHeaderParam
-}	
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: Test-VersionUpdate
@@ -1683,44 +1655,66 @@ Function Collect-ExceptionMessage
 	End {
 	}
 }
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: Get-LogHeader
+# Description....: Creates the log header
+# Parameters.....: None
+# Return Values..: The HEader string 
+# =================================================================================================================================
+Function Get-LogHeader
+{
+    return @"
+###########################################################################################
+#
+#                       Privilege Cloud Pre-requisites Check PowerShell Script
+#
+#
+#
+#
+# Version : $versionNumber
+# CyberArk Software Ltd.
+###########################################################################################
+
+"@
+}	
+
 #endregion
 
+#region Main Script
 ###########################################################################################
 # Main start
 ###########################################################################################
 
 
-    #troubleshooting section
-    if ($Troubleshooting){BindAccount}
+#troubleshooting section
+if ($Troubleshooting){BindAccount}
 
-	Try
-	{	
-        InitLogfileHeaderAndSetLogParams 'CheckPrerequisites'
-        [string]$myDate =  $(get-date -format yyyy-MM-dd) + " "+ $(get-date -format HH:mm:ss:fff) ;
-		WriteLogI $scriptName $myDate $true
-        $adminUser = IsUserAdmin 
-
-        If ($adminUser -eq $False)
-		{
-			WriteLogE $scriptName "You must login as an administrator user in order to run this script" $true
-		}
-		else
-		{
-            versionUpdate		#check if latest version
-            GetPublicIP			#retrieve public IP and save it locally
-		    CheckPrerequisites
-            GetListofDCsAndTestBindAccount		#retrieve list of available DCs from the current machine joined domain.
-		}
-	}
-	Catch
+Try
+{	
+	Write-LogMessage -Type Info -Msg Get-LogHeader -Header
+	Write-LogMessage -Type Info -Msg "Verify user is a local Admin"
+	$adminUser = IsUserAdmin 
+	
+	# Run only if the User is a local admin on the machine
+	If ($adminUser -eq $False)
 	{
-		WriteLogE $scriptName "Checking prerequisites failed" $true 
-		WriteLogE $scriptName  $_.Exception.Message > $null
-		throw ($_.Exception.Message)
-	}	
-
-
-
+		Write-LogMessage -Type Error -Msg "You must logged on as a local administrator in order to run this script"
+		return
+	}
+	else
+	{
+		Test-VersionUpdate								# Check the latest version
+		Write-LogMessage -Type Debug -Msg GetPublicIP	# Retrieve public IP and save it locally #TODO: For what do we need the public IP?
+		CheckPrerequisites  							# Main Pre-requisites check
+		GetListofDCsAndTestBindAccount					# Retrieve list of available DCs from the current machine joined domain.
+	}
+}
+Catch
+{
+	Write-LogMessage -Type Error -Msg "Checking prerequisites failed. Error(s): $(Collect-ExceptionMessage $_.Exception)"
+}	
 ###########################################################################################
 # Main end
 ###########################################################################################	
+#endregion
