@@ -618,7 +618,6 @@ Function DomainUser()
 {
 	try{
 		Write-LogMessage -Type Debug -Msg "Starting DomainUser..."
-		$expected = "Domain user"
 		$result = $false
 		
 		if ($OutOfDomain) 
@@ -646,7 +645,7 @@ Function DomainUser()
 		Write-LogMessage -Type Debug -Msg "Finished DomainUser"
 		
 		return [PsCustomObject]@{
-			expected = $expected;
+			expected = "Domain User";
 			actual = $actual;
 			errorMsg = "";
 			result = $result;
@@ -658,79 +657,50 @@ Function DomainUser()
 }
 
 # @FUNCTION@ ======================================================================================================================
-# Name...........: DomainUser
-# Description....: Check if the user is a Domain user
+# Name...........: PendingRestart
+# Description....: Check if the machine has pending restarts
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
 Function PendingRestart()
 {
-    $expected = "Not pending restart"
-    $actual = "Pending restart"
-    $result = $false
+	try{
+		Write-LogMessage -Type Debug -Msg "Starting PendingRestart..."
+		$actual = ""
+		$result = $false
 
-	$computer = $env:COMPUTERNAME		
-    
-	$HKLM = [UInt32] "0x80000002"
-	$reg = [WMIClass] "\\$computer\root\default:StdRegProv"
-						
-
-    $keys = $reg.EnumKey($HKLM,"SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\")
-	$pendingRestart = $keys.sNames -contains "RebootPending"
-    
-    if($pendingRestart)
-    {
-        $result = $false
-    }	
-	    
-    else
-    {							    
-        $keys = $reg.EnumKey($HKLM,"SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\")
-        $pendingRestart = $RegWUAURebootReq.sNames -contains "RebootRequired"
-    
-        if($pendingRestart)
-        {
-            $result = $false
-        }
-						
-        else
-        {
-            $keys = $reg.GetMultiStringValue($HKLM,"SYSTEM\CurrentControlSet\Control\Session Manager\","PendingFileRenameOperations")
-            $pendingRestart = $RegSubKeySM.sValue
+		$regComponentBasedServicing = (dir 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\' | where { $_.Name -contains "RebootPending" })
+		$regWindowsUpdate = (dir 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\' | where { $_.Name -contains "RebootRequired" })
+		$regSessionManager = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\PendingFileRenameOperations' -ErrorAction Ignore)
+		$wmiClientUtilities = (Invoke-WmiMethod -Namespace "Root\CCM\ClientSDK" -Class CCM_ClientUtilities -Name DetermineIfRebootPending -ErrorAction Ignore).RebootPending
 		
-            if($pendingRestart)
-            {
-                $result = $false
-            }
-            else 
-            {
-                try { 
-                   $util = [wmiclass]"\\.\root\ccm\clientsdk:CCM_ClientUtilities"
-                   $status = $util.DetermineIfRebootPending()
+		$chkComponentBasedServicing = ($null -eq $regComponentBasedServicing) -and ($regComponentBasedServicing -eq $true)
+		$chkWindowsUpdate =	($null -eq $regWindowsUpdate) -and ($regWindowsUpdate -eq $true)
+		$chkSessionManager = ($null -eq $regSessionManager) -and ($regSessionManager -eq $true)
+		$chkClientUtilities = ($null -eq $wmiClientUtilities) -and ($wmiClientUtilities -eq $true)
+		
+		if ($chkComponentBasedServicing -or $chkWindowsUpdate -or $chkSessionManager -or $chkClientUtilities)
+		{
+			$actual = "Pending restart"
+			$result = $False
+		}		
+		else
+		{
+			$actual = "Not Pending restart"
+			$result = $True
+		}
+	
+		Write-LogMessage -Type Debug -Msg "Finished PendingRestart"
 
-                   if(($status -ne $null) -and $status.RebootPending){
-         
-                     $result = $false
-                   }
-                   else
-                   {
-                    $result = $true
-                    $actual = "Not Pending restart"
-                   }
-                }catch{ 
-                    $result = $true      
-                    $actual = "Not Pending restart"
-                }
-            }
-        }
-    }
-
-    [PsCustomObject]@{
-        expected = $expected;
-        actual = $actual;
-        errorMsg = "";
-        result = $result;
-    }
+		return [PsCustomObject]@{
+			expected = "Not pending restart";
+			actual = $actual;
+			errorMsg = "";
+			result = $result;
+		}
+	} catch {
+		Throw $(New-Object System.Exception ("PendingRestart: Could not check pending restart on machine",$_.Exception))
+	}
 }	
 
 Function UsersLoggedOn()
@@ -855,6 +825,7 @@ Function GPO()
 # =================================================================================================================================
 Function VaultConnectivity()
 {
+	Write-LogMessage -Type Debug -Msg "Runing VaultConnectivity"
 	return Test-NetConnectivity -ComputerName $VaultIP -Port 1858
 }
 
@@ -866,6 +837,7 @@ Function VaultConnectivity()
 # =================================================================================================================================
 Function TunnelConnectivity()
 {
+	Write-LogMessage -Type Debug -Msg "Running TunnelConnectivity"
     return Test-NetConnectivity -ComputerName $TunnelIP -Port 5511
 }
 
@@ -877,91 +849,122 @@ Function TunnelConnectivity()
 # =================================================================================================================================
 Function ConsoleNETConnectivity()
 {
+	Write-LogMessage -Type Debug -Msg "Running ConsoleNETConnectivity"
 	return Test-NetConnectivity -ComputerName $ConsoleIP -Port 443
 }
 
+# @FUNCTION@ ======================================================================================================================
+# Name...........: ConsoleNETConnectivity
+# Description....: Tests Privilege Cloud network connectivity on port 443
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
 Function ConsoleHTTPConnectivity()
 {
-$expected = "39"
-$actual = ""
-$result = $false
-$errorMsg = ""
-
-
-
-$CustomerGenericGET = 0
-Try{
-$CustomerGenericGET = Invoke-RestMethod -Uri "https://console.privilegecloud.cyberark.com/connectorConfig/v1?customerId=35741f0e-71fe-4c1a-97c8-28594bf1281d&configItem=environmentFQDN" -TimeoutSec 20 -ContentType 'application/json'
-$actual = $CustomerGenericGET.config.environmentFQDN.attributes.environmentFQDN.Length
-
-    If($actual -eq 39)
-    {
-        $result = $true
-    }
-    }
-    catch 
-    {
-    if ($Error[0].Exception.Message -eq "Unable to connect to the remote server"){
-    $errorMsg = "Unable to connect to the remote server - Unable to GET to https://console.privilegecloud.cyberark.com/connectorConfig/v1?customerId=35741f0e-71fe-4c1a-97c8-28594bf1281d&configItem=environmentFQDN"
-    $result = $false
-    }
-    if ($Error[0].Exception.Message -eq "The underlying connection was closed: An unexpected error occurred on a receive."){
-    $errorMsg = "The underlying connection was closed - Unable to GET to https://console.privilegecloud.cyberark.com/connectorConfig/v1?customerId=35741f0e-71fe-4c1a-97c8-28594bf1281d&configItem=environmentFQDN"
-    $result = $false
-    }
-    }
-    
-
-        [PsCustomObject]@{
-        expected = $expected;
-        actual = $actual;
-        errorMsg = $errorMsg;
-        result = $result;
-    }
+	try{
+		Write-LogMessage -Type Debug -Msg "Starting ConsoleHTTPConnectivity..."
+		$actual = ""
+		$result = $false
+		$errorMsg = ""
+		
+		$CustomerGenericGET = 0
+		Try{
+			#TODO: is it OK that we have here a constant customer ID? should we get he current customer ID?
+			$connectorConfigURL = "https://$ConsoleIP/connectorConfig/v1?customerId=35741f0e-71fe-4c1a-97c8-28594bf1281d&configItem=environmentFQDN"
+			$CustomerGenericGET = Invoke-RestMethod -Uri $connectorConfigURL -TimeoutSec 20 -ContentType 'application/json'
+			If($null -ne $CustomerGenericGET)
+			{
+				$actual = $CustomerGenericGET.config.environmentFQDN.attributes.environmentFQDN.Length
+				$result = ($actual -eq 39)
+			}
+		} catch {
+			if ($_.Exception.Message -eq "Unable to connect to the remote server")
+			{
+				$errorMsg = "Unable to connect to the remote server - Unable to GET to '$connectorConfigURL'"
+				$result = $false
+			}
+			else if ($_.Exception.Message -eq "The underlying connection was closed: An unexpected error occurred on a receive.")
+			{
+				$errorMsg = "The underlying connection was closed - Unable to GET to '$connectorConfigURL'"
+				$result = $false
+			}
+			else
+			{
+				Throw $_
+			}
+		}		
+		
+		Write-LogMessage -Type Debug -Msg "Finished ConsoleHTTPConnectivity"
+		
+		return [PsCustomObject]@{
+			expected = "39";
+			actual = $actual;
+			errorMsg = $errorMsg;
+			result = $result;
+		}
+	} catch {
+		Throw $(New-Object System.Exception ("ConsoleHTTPConnectivity: Could not verify console connectivity",$_.Exception))
+	}
 }
 
+# @FUNCTION@ ======================================================================================================================
+# Name...........: CRLConnectivity
+# Description....: Tests CRL connectivity
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
 Function CRLConnectivity()
 {
-$expected = "200"
-$actual = ""
-$result = $false
-$errorMsg = ""
+	try{
+		Write-LogMessage -Type Debug -Msg "Starting CRLConnectivity..."
+		$actual = ""
+		$result = $false
+		$errorMsg = ""
 
+		$cert1 = 0
+		$cert2 = 0
+		Try{
+			$cert1 = Invoke-WebRequest -Uri http://crl3.digicert.com/CloudFlareIncECCCA2.crl -TimeoutSec 6 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -UseBasicParsing  | select -ExpandProperty StatusCode
+			$cert2 = Invoke-WebRequest -Uri http://crl4.digicert.com/CloudFlareIncECCCA2.crl -TimeoutSec 6 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -UseBasicParsing | select -ExpandProperty StatusCode
 
-$cert1 = 0
-$cert2 = 0
-Try{
-$cert1 = Invoke-WebRequest -Uri http://crl3.digicert.com/CloudFlareIncECCCA2.crl -TimeoutSec 6 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -UseBasicParsing  | select -ExpandProperty StatusCode
-$cert2 = Invoke-WebRequest -Uri http://crl4.digicert.com/CloudFlareIncECCCA2.crl -TimeoutSec 6 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -UseBasicParsing | select -ExpandProperty StatusCode
+			If(($cert1 -eq 200) -and ($cert2 -eq 200))
+			{
+				$actual = "200"
+				$result = $true
+			}
+		} catch {
+			if ($Error[0].ErrorDetails.Message -eq "404 - Not Found")
+			{
+				$errorMsg = "Can't find CRL file on target site, was it changed? Contact CyberArk"
+			}
+			else
+			{
+				Throw $(New-Object System.Exception ("CRLConnectivity: Can't resolve hostname (digicert.com), check DNS settings",$_.Exception))
+			}
+		}
+			
+		Write-LogMessage -Type Debug -Msg "Finished CRLConnectivity"
+		
+		return [PsCustomObject]@{
+			expected = "200";
+			actual = $actual;
+			errorMsg = $errorMsg;
+			result = $result;
+		}
+	} catch {
+		Throw $(New-Object System.Exception ("CRLConnectivity: Could not verify CRL connectivity",$_.Exception))
+	}
+}
 
-    If($cert1 -and $cert2 -eq 200)
-    {
-        $actual = $expected
-        $result = $true
-    }
-    }
-    catch 
-    {
-    if ($Error[0].ErrorDetails.Message -eq "404 - Not Found"){
-    $errorMsg = "Can't find CRL file on target site, was it changed? Contact CyberArk"
-    #Write-Host "Can't find CRL file on target site, was it changed? Contact CyberArk"
-    }
-    $Error[0].Exception.Message
-    $errorMsg = "Can't resolve hostname (digicert.com), check DNS settings"
-    }
-
-    
-
-        [PsCustomObject]@{
-        expected = $expected;
-        actual = $actual;
-        errorMsg = $errorMsg;
-        result = $result;
-    }
-    }
-
+# @FUNCTION@ ======================================================================================================================
+# Name...........: CustomerPortalConnectivity
+# Description....: Tests Privilege Cloud Console network connectivity on port 443
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
 Function CustomerPortalConnectivity()
 {
+	Write-LogMessage -Type Debug -Msg "Running CustomerPortalConnectivity"
 	if ($PortalURL -match "https://")
 	{
 		$PortalURL = ([System.Uri]$PortalURL).Host
@@ -969,116 +972,144 @@ Function CustomerPortalConnectivity()
     return Test-NetConnectivity -ComputerName $PortalURL -Port 443
 }
 
-function Processors()
+# @FUNCTION@ ======================================================================================================================
+# Name...........: Processors
+# Description....: Tests minimum required CPU cores
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+Function Processors()
 {
-    $expected = "True"
-    $actual = ""
-    $result = $false
-    $errorMsg = ""
-    
-    if ((Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors -ge "8")
-    {
-          $actual = "True"
-          $result = $true
-    } 
-    else 
-    {
-          $actual = "False"
-          $result = $false
-          $errorMsg = "Less than minimum (8) cores detected"
-    }
+	try{
+		Write-LogMessage -Type Debug -Msg "Starting Processors..."
+		$actual = ""
+		$result = $false
+		$errorMsg = ""
+		
+		if ((Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors -ge "8")
+		{
+			  $actual = $result = $True
+		} 
+		else 
+		{
+			  $actual = $result = $false
+			  $errorMsg = "Less than minimum (8) cores detected"
+		}
 
-    [PsCustomObject]@{
-        expected = $expected;
-        actual = $actual;
-        errorMsg = $errorMsg;
-        result = $result;
-    }
+		Write-LogMessage -Type Debug -Msg "Finished Processors"
+		return [PsCustomObject]@{
+			expected = $True;
+			actual = $actual;
+			errorMsg = $errorMsg;
+			result = $result;
+		}
+	} catch {
+		Throw $(New-Object System.Exception ("Processors: Could not check minimum required Processors",$_.Exception))
+	}
 }
-	
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: Memory
+# Description....: Tests minimum required Memory
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
 Function Memory()
 {
-    $expected = "True"
-    $actual = ""
-    $result = $false
-    $errorMsg = ""
-    $Memory = [math]::Round(((Get-CimInstance CIM_PhysicalMemory).Capacity | Measure-Object -Sum).Sum / 1GB, 2)
-    $MemoryAWS = [math]::Round((Get-CimInstance -ClassName CIM_ComputerSystem).TotalPhysicalMemory / 1GB, 0)
-    
-    if ($Memory -ge 8 -or $MemoryAWS -ge 8)
-    {
-          $actual = "True"
-          $result = $true
-    } 
-    else 
-    {
-          $actual = "False"
-          $result = $false
-          $errorMsg = "Less than minimum (8) RAM detected"
-    }
-
-    [PsCustomObject]@{
-        expected = $expected;
-        actual = $actual;
-        errorMsg = $errorMsg;
-        result = $result;
-    }
+	try{
+		Write-LogMessage -Type Debug -Msg "Starting Memory..."
+		$actual = ""
+		$result = $false
+		$errorMsg = ""
+		$Memory = [math]::Round(((Get-CimInstance CIM_PhysicalMemory).Capacity | Measure-Object -Sum).Sum / 1GB, 2)
+		$MemoryAWS = [math]::Round((Get-CimInstance -ClassName CIM_ComputerSystem).TotalPhysicalMemory / 1GB, 0)
+		
+		if ($Memory -ge 8 -or $MemoryAWS -ge 8)
+		{
+			  $actual = $result = $True
+		} 
+		else 
+		{
+			  $actual = $result = $false
+			  $errorMsg = "Less than minimum (8) RAM detected"
+		}
+		
+		Write-LogMessage -Type Debug -Msg "Finished Memory"
+		
+		return [PsCustomObject]@{
+			expected = $True;
+			actual = $actual;
+			errorMsg = $errorMsg;
+			result = $result;
+		}
+	} catch {
+		Throw $(New-Object System.Exception ("Memory: Could not check minimum required memory",$_.Exception))
+	}
 }	
 
+# @FUNCTION@ ======================================================================================================================
+# Name...........: SQLServerPermissions
+# Description....: Tests required SQL Server permissions
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
 Function SQLServerPermissions()
 {
-    $expected = "True"
-    $actual = ""
-    $result = $false
-    $errorMsg = ""
+	try{
+		Write-LogMessage -Type Debug -Msg "Starting SQLServerPermissions..."
+		$actual = ""
+		$result = $False
+		$errorMsg = ""
 
-$SecPolGPO = @{
-    "SeDebugPrivilege" = "Debug Programs"
-    "SeBackupPrivilege" = "Back up files and directories"
-    "SeSecurityPrivilege" = "Manage auditing and security log"
-}
+		$SecPolGPO = @{
+			"SeDebugPrivilege" = "Debug Programs";
+			"SeBackupPrivilege" = "Back up files and directories";
+			"SeSecurityPrivilege" = "Manage auditing and security log";
+		}
 
-    
-    $path = "C:\Windows\Temp\SecReport.txt"
-    SecEdit /areas USER_RIGHTS /export /cfg $path
+		$path = "C:\Windows\Temp\SecReport.txt"
+		SecEdit /areas USER_RIGHTS /export /cfg $path
 
-    $SecPol = gc $path
-
-foreach ($sec in $SecPolGPO.Keys) {
-    $administrators = Select-String $path -Pattern $sec
-        if($administrators -eq $null)
-            {
-        $actual = "False"
-        $errorMsg = "Missing administrators in Group Policy: " + $SecPolGPO[$sec]
-        $result = $false
-            }
-        else
-        {
-           foreach ($admin in $administrators)
-           {
-        if ($admin -like "*S-1-5-32-544*")
-           {
-        $actual = "True"
-        $result = $actual
-            }
-        else
-            {
-        $actual = "False"
-        $errorMsg = "Missing administrators in Group Policy: " + $SecPolGPO[$sec]
-        $result = $false
-            }
-            }
-        }
-
-    }
-
-
-    [PsCustomObject]@{
-        expected = $expected;
-        actual = $actual;
-        errorMsg = $errorMsg;
-        result = $result;
-    }
+		ForEach ($sec in $SecPolGPO.Keys) 
+		{
+			Write-LogMessage -Type Verbose -Msg "Checking $sec group policy for Local Administrators access"
+			$administrators = Select-String $path -Pattern $sec
+			if($administrators -eq $null)
+			{
+				Write-LogMessage -Type Verbose -Msg "No Local Administrators access for $sec group policy"
+				$actual = $result = $False
+				$errorMsg = "Missing administrators in Group Policy: " + $SecPolGPO[$sec]
+			}
+			else
+			{
+				foreach ($admin in $administrators)
+				{
+					if ($admin -like "*S-1-5-32-544*")
+					{
+						Write-LogMessage -Type Verbose -Msg "$sec group policy has Local Administrators access"
+						$actual = $result = $True
+					}
+					else
+					{
+						Write-LogMessage -Type Verbose -Msg "No Local Administrators access for $sec group policy"
+						$actual = $result = $False
+						$errorMsg = "Missing administrators in Group Policy: " + $SecPolGPO[$sec]
+					}
+				}
+			}
+		}
+		
+		Write-LogMessage -Type Debug -Msg "Finished SQLServerPermissions"
+		
+		return [PsCustomObject]@{
+			expected = $True;
+			actual = $actual;
+			errorMsg = $errorMsg;
+			result = $result;
+		}
+	} catch {
+		Throw $(New-Object System.Exception ("SQLServerPermissions: Could not check SQL Server permissions",$_.Exception))
+	}
 }
 
 # @FUNCTION@ ======================================================================================================================
@@ -1114,10 +1145,9 @@ Function NotAzureADJoinedOn2019()
 			result = $result;
 		}
 	} catch {
-		Throw $(New-Object System.Exception ("NotAzureADJoinedOn2019: Could not check if sevrer is joined to Azure Domain",$_.Exception))
+		Throw $(New-Object System.Exception ("NotAzureADJoinedOn2019: Could not check if server is joined to Azure Domain",$_.Exception))
 	}
 }
-
 #endregion
 
 #region Helper functions
@@ -1163,34 +1193,34 @@ Function IsUserAdmin()
     return (New-Object Security.Principal.WindowsPrincipal $user).IsInRole([Security.Principal.SecurityIdentifier] "S-1-5-32-544")  # Local Administrators group SID
 }
 
-Function ReadGPOValue ($gpoName)
+Function ReadGPOValue
 {
-
-    $extentionsDataNum = $xml.Rsop.ComputerResults.ExtensionData.Count
+	param(
+		[XML]$gpoXML,
+		[String]$gpoName
+	)
+    $extentionsDataNum = $gpoXML.Rsop.ComputerResults.ExtensionData.Count
 	
 	for ($extentionData = 0; $extentionData -lt $extentionsDataNum; $extentionData++)
 	{
-	
-		$PoliciesNumber =  $xml.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy.Count
+		$PoliciesNumber =  $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy.Count
 
         if ($PoliciesNumber -eq $null)
         {
-           $PolicyName = $xml.Rsop.ComputerResults.ExtensionData.Extension.Policy.Name
+           $PolicyName = $gpoXML.Rsop.ComputerResults.ExtensionData.Extension.Policy.Name
 
            if ($PolicyName -eq $gpoName)
 			{
-				$PolicyState = $xml.Rsop.ComputerResults.ExtensionData.Extension.Policy.State 
-				$PolicyIdentifier = $xml.Rsop.ComputerResults.ExtensionData.Extension.Policy.gpo.Identifier.'#text'
+				$PolicyState = $gpoXML.Rsop.ComputerResults.ExtensionData.Extension.Policy.State 
+				$PolicyIdentifier = $gpoXML.Rsop.ComputerResults.ExtensionData.Extension.Policy.gpo.Identifier.'#text'
 
-				if ($xml.Rsop.ComputerResults.ExtensionData.Extension.Policy.value.Name)
+				if ($gpoXML.Rsop.ComputerResults.ExtensionData.Extension.Policy.value.Name)
 				{
-					$PolicyValue = $xml.Rsop.ComputerResults.ExtensionData.Extension.Policy.value.Name
+					$PolicyValue = $gpoXML.Rsop.ComputerResults.ExtensionData.Extension.Policy.value.Name
 				}
 
 				return $PolicyState
 			}
-
-
         }
 		$PolicyName = ""
 		$PolicyState = ""
@@ -1199,16 +1229,16 @@ Function ReadGPOValue ($gpoName)
 
         for ($node = 0 ; $node -lt $PoliciesNumber; $node++)
 		{
-			$PolicyName = $xml.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].Name
+			$PolicyName = $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].Name
 
 			if ($PolicyName -eq $gpoName)
 			{
-				$PolicyState = $xml.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].State 
-				$PolicyIdentifier = $xml.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].gpo.Identifier.'#text'
+				$PolicyState = $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].State 
+				$PolicyIdentifier = $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].gpo.Identifier.'#text'
 
-				if ($xml.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].value.Name)
+				if ($gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].value.Name)
 				{
-					$PolicyValue = $xml.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].value.Name
+					$PolicyValue = $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].value.Name
 				}
 
 				return $PolicyState
