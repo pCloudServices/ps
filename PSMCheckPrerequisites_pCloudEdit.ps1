@@ -145,7 +145,7 @@ Throw "Error binding to ldap  - $($_.Exception.Message)"
 }
 
 
-Write-Verbose "Successfully bound to LDAP!" -Verbose
+Write-LogMessage -Type Verbose -Msg "Successfully bound to LDAP!"
 $basedn = "DC=cyberarkdemo,DC=com" # TODO: Get current domain name of the machine or request domain name
 $scope = [System.DirectoryServices.Protocols.SearchScope]::Base
 #Null returns all available attributes
@@ -295,37 +295,17 @@ Test-LDAP |format-table| Tee-Object -file "$PSScriptRoot\DCInfo.txt"
 
 #region Prerequisites methods
 # @FUNCTION@ ======================================================================================================================
-# Name...........: GetPublicIP
-# Description....: Returns the public IP of the machine
-# Parameters.....: None
-# Return Values..: String, Public IP Address of local machine
-# =================================================================================================================================
-Function GetPublicIP()
-{
-	$PublicIP = ""
-
-	try{
-		Write-LogMessage -Type Info -Msg "Attempting to retrieve Public IP, this can take up to 15 secs."
-		$PublicIP = (Invoke-WebRequest -Uri ipinfo.io/ip -UseBasicParsing -TimeoutSec 5).Content
-		$PublicIP | Out-File "$($env:COMPUTERNAME) PublicIP.txt"
-		Write-LogMessage -Type Debug -Msg "Successfully fetched Public IP: $PublicIP and saved it in a local file '$($env:COMPUTERNAME) PublicIP.txt'"
-		return $PublicIP
-	}
-	catch{
-		Throw $(New-Object System.Exception ("GetPublicIP: Couldn't grab Public IP for you, you'll have to do it manually",$_.Exception))
-	}
-}
-
-# @FUNCTION@ ======================================================================================================================
 # Name...........: CheckNoRDS
 # Description....: Check if RDS is installed before the connector is installed
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
-Function CheckNoRDS()
+Function CheckNoRDS
 {
+	[OutputType([PsCustomObject])]
+	param ()
 	try{
-		Write-LogMessage -Type Debug -Msg "Starting CheckNoRDS..."
+		Write-LogMessage -Type Verbose -Msg "Starting CheckNoRDS..."
 		$errorMsg = ""
 		$result = $True
 		$actual = (Get-WindowsFeature Remote-Desktop-Services).InstallState -eq "Installed"
@@ -334,18 +314,17 @@ Function CheckNoRDS()
 			$result = $False
 			$errorMsg = "RDS shouldn't be deployed before CyberArk is installed, remove RDS role and make sure there are no domain level GPO RDS settings applied (rsop.msc). Please note, after you remove RDS and restart you may need to use 'mstsc /admin' to connect back to the machine."
 		}
-		Write-LogMessage -Type Debug -Msg "Finished CheckNoRDS"
-		
-		return [PsCustomObject]@{
-			expected = $False;
-			actual = $actual;
-			errorMsg = $errorMsg;
-			result = $result;
-		}
+		Write-LogMessage -Type Verbose -Msg "Finished CheckNoRDS"
 	} catch {
-		Throw $(New-Object System.Exception ("CheckNoRDS: Could not check RDS installation",$_.Exception))
+		$errorMsg = "Could not check RDS installation. Error: $(Collect-ExceptionMessage $_.Exception)"
 	}
-      
+		
+	return [PsCustomObject]@{
+		expected = $False;
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}      
 }
 
 # @FUNCTION@ ======================================================================================================================
@@ -354,10 +333,12 @@ Function CheckNoRDS()
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
-Function OSVersion()
+Function OSVersion
 {
+	[OutputType([PsCustomObject])]
+	param ()
 	try{
-		Write-LogMessage -Type Debug -Msg "Starting OSVersion..."
+		Write-LogMessage -Type Verbose -Msg "Starting OSVersion..."
 		$actual = (Get-WmiObject Win32_OperatingSystem).caption
 		$errorMsg = ""
 		$result = $false
@@ -375,16 +356,16 @@ Function OSVersion()
 		{
 			$result = $false
 		}
-		Write-LogMessage -Type Debug -Msg "Finished OSVersion"
-		
-		return [PsCustomObject]@{
-			expected = "Windows Server 2016/2019";
-			actual = $actual;
-			errorMsg = $errorMsg;
-			result = $result;
-		}
+		Write-LogMessage -Type Verbose -Msg "Finished OSVersion"
 	} catch {
-		Throw $(New-Object System.Exception ("OSVersion: Could not get OS Version",$_.Exception))
+		$errorMsg = "Could not get OS Version. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+		
+	return [PsCustomObject]@{
+		expected = "Windows Server 2016/2019";
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
 	}
 }
 
@@ -394,10 +375,12 @@ Function OSVersion()
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
-Function IPV6()
+Function IPV6
 {
+	[OutputType([PsCustomObject])]
+	param ()
 	try{
-		Write-LogMessage -Type Debug -Msg "Starting IPv6..."
+		Write-LogMessage -Type Verbose -Msg "Starting IPv6..."
 		$actual = ""
 		$result = $false
 		$errorMsg = ""
@@ -427,16 +410,16 @@ This will aply only after restart I think
 			$result = $true
 		}
 		
-		Write-LogMessage -Type Debug -Msg "Finished IPv6"
-
-		return [PsCustomObject]@{
-			expected = "Disabled";
-			actual = $actual;
-			errorMsg = $errorMsg;
-			result = $result;
-		}
+		Write-LogMessage -Type Verbose -Msg "Finished IPv6"
 	} catch {
-		Throw $(New-Object System.Exception ("IPv6: Could not get IPv6 Status",$_.Exception))
+		$errorMsg = "Could not get IPv6 Status. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+	
+	return [PsCustomObject]@{
+		expected = "Disabled";
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
 	}
 }
 
@@ -446,10 +429,12 @@ This will aply only after restart I think
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
-Function PSRemoting()
+Function PSRemoting
 {
+	[OutputType([PsCustomObject])]
+	param ()
 	try{
-		Write-LogMessage -Type Debug -Msg "Starting PSRemoting..."
+		Write-LogMessage -Type Verbose -Msg "Starting PSRemoting..."
 		$actual = ""	
 		$result = $false
 		$errorMsg = ""
@@ -464,8 +449,8 @@ Function PSRemoting()
 		{
 			$actual = "Disabled"
 			$result = $false
-			Add-Type -AssemblyName System.DirectoryServices.AccountManagement
-			$UserMemberOfProtectedGroup = [System.DirectoryServices.AccountManagement.UserPrincipal]::Current.GetGroups().Name -match "Protected Users"
+			
+			$UserMemberOfProtectedGroup = $(Get-UserPrincipal).GetGroups().Name -match "Protected Users"
 			if ($UserMemberOfProtectedGroup)
 			{
 				$errorMsg = "Current user was detected in 'Protected Users' group in AD, remove from group."
@@ -475,17 +460,17 @@ Function PSRemoting()
 				$errorMsg = "Could not connect using PSRemoting to $($env:COMPUTERNAME)"
 			}
 		}
-		Write-LogMessage -Type Debug -Msg "Finished PSRemoting"
-		
+		Write-LogMessage -Type Verbose -Msg "Finished PSRemoting"	
+	} catch {
+		$errorMsg = "Could not get PSRemoting Status. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+	
 		return [PsCustomObject]@{
 			expected = "Enabled";
 			actual = $actual;
 			errorMsg = $errorMsg;
 			result = $result;
 		}
-	} catch {
-		Throw $(New-Object System.Exception ("PSRemoting: Could not get PSRemoting Status",$_.Exception))
-	}
 }
 
 # @FUNCTION@ ======================================================================================================================
@@ -494,10 +479,12 @@ Function PSRemoting()
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
-Function KBs()
+Function KBs
 {
+	[OutputType([PsCustomObject])]
+	param ()
 	try{
-		Write-LogMessage -Type Debug -Msg "Starting KBs..."
+		Write-LogMessage -Type Verbose -Msg "Starting KBs..."
 		$actual = ""
 		$errorMsg = ""
 		$otherOS = $false
@@ -560,15 +547,16 @@ Function KBs()
 			}
 		}
 
-		Write-LogMessage -Type Debug -Msg "Finished KBs"
-		return [PsCustomObject]@{
-			expected = "Installed";
-			actual = $actual;
-			errorMsg = $errorMsg;
-			result = $result;
-		}
+		Write-LogMessage -Type Verbose -Msg "Finished KBs"
 	} catch {
-		Throw $(New-Object System.Exception ("KBs: Could not get Installed KBs",$_.Exception))
+		$errorMsg = "Could not get Installed KBs. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+	
+	return [PsCustomObject]@{
+		expected = "Installed";
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
 	}
 }
 
@@ -578,10 +566,12 @@ Function KBs()
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
-Function ServerInDomain()
+Function ServerInDomain
 {
+	[OutputType([PsCustomObject])]
+	param ()
 	try{
-		Write-LogMessage -Type Debug -Msg "Starting ServerInDomain..."
+		Write-LogMessage -Type Verbose -Msg "Starting ServerInDomain..."
 		$result = $false
     
 		if ((gwmi win32_computersystem).partofdomain) 
@@ -595,16 +585,16 @@ Function ServerInDomain()
 			  $result = $false
 		}
 
-		Write-LogMessage -Type Debug -Msg "Finished ServerInDomain"
-		
-		return [PsCustomObject]@{
-			expected = "In Domain";
-			actual = $actual;
-			errorMsg = "";
-			result = $result;
-		}
+		Write-LogMessage -Type Verbose -Msg "Finished ServerInDomain"
 	} catch {
-		Throw $(New-Object System.Exception ("ServerInDomain: Could not verify if server is in Domain",$_.Exception))
+		$errorMsg = "Could not verify if server is in Domain. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+		
+	return [PsCustomObject]@{
+		expected = "In Domain";
+		actual = $actual;
+		errorMsg = "";
+		result = $result;
 	}
 }	
 
@@ -614,10 +604,12 @@ Function ServerInDomain()
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
-Function DomainUser()
+Function DomainUser
 {
+	[OutputType([PsCustomObject])]
+	param ()
 	try{
-		Write-LogMessage -Type Debug -Msg "Starting DomainUser..."
+		Write-LogMessage -Type Verbose -Msg "Starting DomainUser..."
 		$result = $false
 		
 		if ($OutOfDomain) 
@@ -641,16 +633,16 @@ Function DomainUser()
 			}
 		}
 
-		Write-LogMessage -Type Debug -Msg "Finished DomainUser"
-		
-		return [PsCustomObject]@{
-			expected = "Domain User";
-			actual = $actual;
-			errorMsg = "";
-			result = $result;
-		}
+		Write-LogMessage -Type Verbose -Msg "Finished DomainUser"
 	} catch {
-		Throw $(New-Object System.Exception ("DomainUser: Could not verify if user is a Domain user",$_.Exception))
+		$errorMsg = "Could not verify if user is a Domain user. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+		
+	return [PsCustomObject]@{
+		expected = "Domain User";
+		actual = $actual;
+		errorMsg = "";
+		result = $result;
 	}
 }
 
@@ -660,10 +652,12 @@ Function DomainUser()
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
-Function PendingRestart()
+Function PendingRestart
 {
+	[OutputType([PsCustomObject])]
+	param ()
 	try{
-		Write-LogMessage -Type Debug -Msg "Starting PendingRestart..."
+		Write-LogMessage -Type Verbose -Msg "Starting PendingRestart..."
 		$actual = ""
 		$result = $false
 
@@ -688,16 +682,16 @@ Function PendingRestart()
 			$result = $True
 		}
 	
-		Write-LogMessage -Type Debug -Msg "Finished PendingRestart"
-
-		return [PsCustomObject]@{
-			expected = "Not pending restart";
-			actual = $actual;
-			errorMsg = "";
-			result = $result;
-		}
+		Write-LogMessage -Type Verbose -Msg "Finished PendingRestart"
 	} catch {
-		Throw $(New-Object System.Exception ("PendingRestart: Could not check pending restart on machine",$_.Exception))
+		$errorMsg = "Could not check pending restart on machine. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+
+	return [PsCustomObject]@{
+		expected = "Not pending restart";
+		actual = $actual;
+		errorMsg = "";
+		result = $result;
 	}
 }	
 
@@ -707,16 +701,18 @@ Function PendingRestart()
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
-Function UsersLoggedOn()
+Function UsersLoggedOn
 {
+	[OutputType([PsCustomObject])]
+	param ()
     $actual = ""
     $errorMsg = ""
     $result = $false
         
 	try{
-		Write-LogMessage -Type Debug -Msg "Starting UsersLoggedOn..."
+		Write-LogMessage -Type Verbose -Msg "Starting UsersLoggedOn..."
 		
-		$numOfActiveUsers = (query.exe user /server $($env:COMPUTERNAME) | measure).Count
+		$numOfActiveUsers = (query.exe user /server $($env:COMPUTERNAME) | select-object -skip 1 | measure).Count
 
 		if($numOfActiveUsers -gt 1)
 		{
@@ -736,7 +732,7 @@ Function UsersLoggedOn()
 		$result = $false
 	}
 	
-	Write-LogMessage -Type Debug -Msg "Finished UsersLoggedOn"
+	Write-LogMessage -Type Verbose -Msg "Finished UsersLoggedOn"
 	
     return [PsCustomObject]@{
         expected = "Only one user is logged on";
@@ -752,10 +748,12 @@ Function UsersLoggedOn()
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
-Function GPO()
+Function GPO
 {
+	[OutputType([PsCustomObject])]
+	param ()
 	try{
-		Write-LogMessage -Type Debug -Msg "Starting GPO..."
+		Write-LogMessage -Type Verbose -Msg "Starting GPO..."
 		$actual = ""	
 		$errorMsg = ""
 		$result = $false
@@ -764,8 +762,6 @@ Function GPO()
 
 		$path = "C:\Windows\temp\GPOReport.xml"
 		gpresult /f /x $path *> $null
-
-		WriteLogAndReturnCursor ""
 
 		[xml]$xml = Get-Content $path
 
@@ -790,13 +786,15 @@ Function GPO()
 					if(-not $gpoResult )
 					{
 						$compatible = $false
-						$errorMsg = "Expected:"+$gpo.Expected+"  Actual:"+$actual
+						$errorMsg = "Expected:"+$gpo.Expected+" Actual:"+$actual
 					}
 				}
 			
 				$name = "GPO: "+$gpo.Name
-				$reportObj = @{expected = $gpo.Expected; actual =   $actual; errorMsg = $errorMsg; result = $gpoResult;}
-				AddLineToReport $name $reportObj #TODO: Check this method
+				Write-LogMessage -Type Verbose -Msg ("{0}; Expected: {1}; Actual: {2}" -f $name, $gpo.Expected, $actual)
+				$reportObj = @{expected = $gpo.Expected; actual = $actual; errorMsg = $errorMsg; result = $gpoResult;}
+				#AddLineToReport $name $reportObj #TODO: Check this method
+				AddLineToTable $name $reportObj
 			}#loop end
 		}
 
@@ -810,15 +808,15 @@ Function GPO()
 		{
 		   $result = $true
 		}
-
-		return [PsCustomObject]@{
-			expected = "PSM Compatible";
-			actual = $actual;
-			errorMsg = $errorMsg;
-			result = $result;
-		}
 	} catch {
-		Throw $(New-Object System.Exception ("GPO: Could not check GPO settings on machine",$_.Exception))
+		$errorMsg = "Could not check GPO settings on machine. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+
+	return [PsCustomObject]@{
+		expected = "PSM Compatible";
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
 	}
 }
 
@@ -828,9 +826,11 @@ Function GPO()
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
-Function VaultConnectivity()
+Function VaultConnectivity
 {
-	Write-LogMessage -Type Debug -Msg "Runing VaultConnectivity"
+	[OutputType([PsCustomObject])]
+	param ()
+	Write-LogMessage -Type Verbose -Msg "Runing VaultConnectivity"
 	return Test-NetConnectivity -ComputerName $VaultIP -Port 1858
 }
 
@@ -840,9 +840,11 @@ Function VaultConnectivity()
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
-Function TunnelConnectivity()
+Function TunnelConnectivity
 {
-	Write-LogMessage -Type Debug -Msg "Running TunnelConnectivity"
+	[OutputType([PsCustomObject])]
+	param ()
+	Write-LogMessage -Type Verbose -Msg "Running TunnelConnectivity"
     return Test-NetConnectivity -ComputerName $TunnelIP -Port 5511
 }
 
@@ -852,9 +854,11 @@ Function TunnelConnectivity()
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
-Function ConsoleNETConnectivity()
+Function ConsoleNETConnectivity
 {
-	Write-LogMessage -Type Debug -Msg "Running ConsoleNETConnectivity"
+	[OutputType([PsCustomObject])]
+	param ()
+	Write-LogMessage -Type Verbose -Msg "Running ConsoleNETConnectivity"
 	return Test-NetConnectivity -ComputerName $g_ConsoleIP -Port 443
 }
 
@@ -864,10 +868,12 @@ Function ConsoleNETConnectivity()
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
-Function ConsoleHTTPConnectivity()
+Function ConsoleHTTPConnectivity
 {
+	[OutputType([PsCustomObject])]
+	param ()
 	try{
-		Write-LogMessage -Type Debug -Msg "Starting ConsoleHTTPConnectivity..."
+		Write-LogMessage -Type Verbose -Msg "Starting ConsoleHTTPConnectivity..."
 		$actual = ""
 		$result = $false
 		$errorMsg = ""
@@ -888,7 +894,7 @@ Function ConsoleHTTPConnectivity()
 				$errorMsg = "Unable to connect to the remote server - Unable to GET to '$connectorConfigURL'"
 				$result = $false
 			}
-			else if ($_.Exception.Message -eq "The underlying connection was closed: An unexpected error occurred on a receive.")
+			elseif ($_.Exception.Message -eq "The underlying connection was closed: An unexpected error occurred on a receive.")
 			{
 				$errorMsg = "The underlying connection was closed - Unable to GET to '$connectorConfigURL'"
 				$result = $false
@@ -899,16 +905,16 @@ Function ConsoleHTTPConnectivity()
 			}
 		}		
 		
-		Write-LogMessage -Type Debug -Msg "Finished ConsoleHTTPConnectivity"
-		
-		return [PsCustomObject]@{
-			expected = "39";
-			actual = $actual;
-			errorMsg = $errorMsg;
-			result = $result;
-		}
+		Write-LogMessage -Type Verbose -Msg "Finished ConsoleHTTPConnectivity"
 	} catch {
-		Throw $(New-Object System.Exception ("ConsoleHTTPConnectivity: Could not verify console connectivity",$_.Exception))
+		$errorMsg = "Could not verify console connectivity. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+		
+	return [PsCustomObject]@{
+		expected = "39";
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
 	}
 }
 
@@ -918,10 +924,12 @@ Function ConsoleHTTPConnectivity()
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
-Function CRLConnectivity()
+Function CRLConnectivity
 {
+	[OutputType([PsCustomObject])]
+	param ()
 	try{
-		Write-LogMessage -Type Debug -Msg "Starting CRLConnectivity..."
+		Write-LogMessage -Type Verbose -Msg "Starting CRLConnectivity..."
 		$actual = ""
 		$result = $false
 		$errorMsg = ""
@@ -948,16 +956,16 @@ Function CRLConnectivity()
 			}
 		}
 			
-		Write-LogMessage -Type Debug -Msg "Finished CRLConnectivity"
-		
-		return [PsCustomObject]@{
-			expected = "200";
-			actual = $actual;
-			errorMsg = $errorMsg;
-			result = $result;
-		}
+		Write-LogMessage -Type Verbose -Msg "Finished CRLConnectivity"
 	} catch {
-		Throw $(New-Object System.Exception ("CRLConnectivity: Could not verify CRL connectivity",$_.Exception))
+		$errorMsg = "Could not verify CRL connectivity. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+		
+	return [PsCustomObject]@{
+		expected = "200";
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
 	}
 }
 
@@ -967,9 +975,11 @@ Function CRLConnectivity()
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
-Function CustomerPortalConnectivity()
+Function CustomerPortalConnectivity
 {
-	Write-LogMessage -Type Debug -Msg "Running CustomerPortalConnectivity"
+	[OutputType([PsCustomObject])]
+	param ()
+	Write-LogMessage -Type Verbose -Msg "Running CustomerPortalConnectivity"
 	if ($PortalURL -match "https://")
 	{
 		$PortalURL = ([System.Uri]$PortalURL).Host
@@ -983,33 +993,39 @@ Function CustomerPortalConnectivity()
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
-Function Processors()
+Function Processors
 {
+	[OutputType([PsCustomObject])]
+	param ()
 	try{
-		Write-LogMessage -Type Debug -Msg "Starting Processors..."
+		Write-LogMessage -Type Verbose -Msg "Starting Processors..."
 		$actual = ""
 		$result = $false
 		$errorMsg = ""
 		
-		if ((Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors -ge "8")
+		$cpuNumber = (Get-CimInstance Win32_ComputerSystem).NumberOfLogicalProcessors
+		if ($cpuNumber -ge "8")
 		{
-			  $actual = $result = $True
+			  $actual = $cpuNumber
+			  $result = $True
 		} 
 		else 
 		{
-			  $actual = $result = $false
+			  $actual = $cpuNumber
+			  $result = $false
 			  $errorMsg = "Less than minimum (8) cores detected"
 		}
 
-		Write-LogMessage -Type Debug -Msg "Finished Processors"
-		return [PsCustomObject]@{
-			expected = $True;
-			actual = $actual;
-			errorMsg = $errorMsg;
-			result = $result;
-		}
+		Write-LogMessage -Type Verbose -Msg "Finished Processors"
 	} catch {
-		Throw $(New-Object System.Exception ("Processors: Could not check minimum required Processors",$_.Exception))
+		$errorMsg = "Could not check minimum required Processors. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+	
+	return [PsCustomObject]@{
+		expected = $True;
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
 	}
 }
 
@@ -1019,10 +1035,12 @@ Function Processors()
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
-Function Memory()
+Function Memory
 {
+	[OutputType([PsCustomObject])]
+	param ()
 	try{
-		Write-LogMessage -Type Debug -Msg "Starting Memory..."
+		Write-LogMessage -Type Verbose -Msg "Starting Memory..."
 		$actual = ""
 		$result = $false
 		$errorMsg = ""
@@ -1031,24 +1049,26 @@ Function Memory()
 		
 		if ($Memory -ge 8 -or $MemoryAWS -ge 8)
 		{
-			  $actual = $result = $True
+			  $actual = $Memory
+			  $result = $True
 		} 
 		else 
 		{
-			  $actual = $result = $false
+			  $actual = $Memory
+			  $result = $false
 			  $errorMsg = "Less than minimum (8) RAM detected"
 		}
 		
-		Write-LogMessage -Type Debug -Msg "Finished Memory"
-		
-		return [PsCustomObject]@{
-			expected = $True;
-			actual = $actual;
-			errorMsg = $errorMsg;
-			result = $result;
-		}
+		Write-LogMessage -Type Verbose -Msg "Finished Memory"
 	} catch {
-		Throw $(New-Object System.Exception ("Memory: Could not check minimum required memory",$_.Exception))
+		$errorMsg = "Could not check minimum required memory. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+		
+	return [PsCustomObject]@{
+		expected = $True;
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
 	}
 }	
 
@@ -1058,10 +1078,12 @@ Function Memory()
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
-Function SQLServerPermissions()
+Function SQLServerPermissions
 {
+	[OutputType([PsCustomObject])]
+	param ()
 	try{
-		Write-LogMessage -Type Debug -Msg "Starting SQLServerPermissions..."
+		Write-LogMessage -Type Verbose -Msg "Starting SQLServerPermissions..."
 		$actual = ""
 		$result = $False
 		$errorMsg = ""
@@ -1104,16 +1126,16 @@ Function SQLServerPermissions()
 			}
 		}
 		
-		Write-LogMessage -Type Debug -Msg "Finished SQLServerPermissions"
-		
-		return [PsCustomObject]@{
-			expected = $True;
-			actual = $actual;
-			errorMsg = $errorMsg;
-			result = $result;
-		}
+		Write-LogMessage -Type Verbose -Msg "Finished SQLServerPermissions"
 	} catch {
-		Throw $(New-Object System.Exception ("SQLServerPermissions: Could not check SQL Server permissions",$_.Exception))
+		$errorMsg = "Could not check SQL Server permissions. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+		
+	return [PsCustomObject]@{
+		expected = $True;
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
 	}
 }
 
@@ -1123,13 +1145,15 @@ Function SQLServerPermissions()
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
-Function NotAzureADJoinedOn2019()
+Function NotAzureADJoinedOn2019
 {
+	[OutputType([PsCustomObject])]
+	param ()
 	try{
 		$actual = $False
 		$result = $False
 		$errorMsg = ""
-		Write-LogMessage -Type Debug -Msg "Starting NotAzureADJoinedOn2019..."
+		Write-LogMessage -Type Verbose -Msg "Starting NotAzureADJoinedOn2019..."
 		$CheckIfMachineIsOnAzure = ((((dsregcmd /status) -match "AzureAdJoined" | Out-String).Split(":") | Select-Object -Skip 1) -match "YES")
 		$Machine2019 = (Get-WmiObject Win32_OperatingSystem).caption -like '*2019*'
 
@@ -1141,16 +1165,16 @@ Function NotAzureADJoinedOn2019()
 			$result = $True
 		}
 		
-		Write-LogMessage -Type Debug -Msg "Finished NotAzureADJoinedOn2019"
-		
-		return [PsCustomObject]@{
-			expected = $True;
-			actual = $actual;
-			errorMsg = $errorMsg;
-			result = $result;
-		}
+		Write-LogMessage -Type Verbose -Msg "Finished NotAzureADJoinedOn2019"
 	} catch {
-		Throw $(New-Object System.Exception ("NotAzureADJoinedOn2019: Could not check if server is joined to Azure Domain",$_.Exception))
+		$errorMsg = "Could not check if server is joined to Azure Domain. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+		
+	return [PsCustomObject]@{
+		expected = $True;
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
 	}
 }
 #endregion
@@ -1158,37 +1182,73 @@ Function NotAzureADJoinedOn2019()
 #region Helper functions
 # @FUNCTION@ ======================================================================================================================
 # Name...........: Test-NetConnectivity
-# Description....: Tests network connectivity to a specific Histname/IP on a specific port
+# Description....: Tests network connectivity to a specific Hostname/IP on a specific port
 # Parameters.....: ComputerName, Port
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
 Function Test-NetConnectivity
 {
-	[OutputType([PsCustomObject])
+	[OutputType([PsCustomObject])]
 	param(
 		[string]$ComputerName,
 		[int]$Port
 	)
 	$errorMsg = ""
-	$result = $True
-	$retNetTest = Test-NetConnection -ComputerName $ComputerName -Port Port -WarningVariable retWarning | select -ExpandProperty "TcpTestSucceeded"
-	If($retWarning -like "*TCP connect to* failed" -or $retWarning -like "*Name resolution of*")
-	{
-		$errorMsg = "Network connectivity failed, check FW rules to '$ComputerName' on port '$Port' are allowed"
-		$result = $False
+	$result = $False
+    try{
+		If(Get-Command Test-NetConnection -ErrorAction Ignore)
+		{
+			$retNetTest = Test-NetConnection -ComputerName $ComputerName -Port $Port -WarningVariable retWarning | select -ExpandProperty "TcpTestSucceeded"
+			If($retWarning -like "*TCP connect to* failed" -or $retWarning -like "*Name resolution of*")
+			{
+				$errorMsg = "Network connectivity failed, check FW rules to '$ComputerName' on port '$Port' are allowed"
+				$result = $False
+			}
+			Else { $result = $True }
+		}
+		Else
+		{
+			# For OS with lower PowerShell version or Windows 2012
+			$tcpClient = New-Object Net.Sockets.TcpClient
+			$tcpClient.ReceiveTimeout = $tcpClient.SendTimeout = 2000;
+			# We use Try\Catch to remove exception info from console if we can't connect
+			try { 
+				$tcpClient.Connect($ComputerName,$Port) 
+				$retNetTest = $tcpClient.Connected
+				if($retNetTest)
+				{
+					$tcpClient.Close()
+					$result = $True
+				}
+				else
+				{
+					$errorMsg = "Network connectivity failed, check FW rules to '$ComputerName' on port '$Port' are allowed"
+					$result = $False
+				}
+			} catch {}
+		}
+    } catch {
+		$errorMsg = "Could not check network connectivity to '$ComputerName'. Error: $(Collect-ExceptionMessage $_.Exception)"
 	}
 	
 	return [PsCustomObject]@{
-        expected = "True";
-        actual = $retNetTest;
-        errorMsg = $errorMsg;
-        result = $result;
-    }
+		expected = $True;
+		actual = $retNetTest;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
 }
 
+# @FUNCTION@ ======================================================================================================================
+# Name...........: Get-UserPrincipal
+# Description....: Returns the Current User Principal object
+# Parameters.....: None
+# Return Values..: Current User Principal
+# =================================================================================================================================
 Function Get-UserPrincipal
 {
-	Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+	try { [System.DirectoryServices.AccountManagement] -as [type] }
+	catch { Add-Type -AssemblyName System.DirectoryServices.AccountManagement }
 	return [System.DirectoryServices.AccountManagement.UserPrincipal]::Current
 }
 
@@ -1204,14 +1264,50 @@ Function IsUserAdmin()
     return (New-Object Security.Principal.WindowsPrincipal $user).IsInRole([Security.Principal.SecurityIdentifier] "S-1-5-32-544")  # Local Administrators group SID
 }
 
+# @FUNCTION@ ======================================================================================================================
+# Name...........: GetPublicIP
+# Description....: Returns the public IP of the machine
+# Parameters.....: None
+# Return Values..: String, Public IP Address of local machine
+# =================================================================================================================================
+Function GetPublicIP()
+{
+	$PublicIP = ""
+
+	try{
+		Write-LogMessage -Type Info -Msg "Attempting to retrieve Public IP, this can take up to 15 secs."
+		$PublicIP = (Invoke-WebRequest -Uri ipinfo.io/ip -UseBasicParsing -TimeoutSec 5).Content
+		$PublicIP | Out-File "$($env:COMPUTERNAME) PublicIP.txt"
+		Write-LogMessage -Type Info -Msg "Successfully fetched Public IP: $PublicIP and saved it in a local file '$($env:COMPUTERNAME) PublicIP.txt'"
+		return $PublicIP
+	}
+	catch{
+		Throw $(New-Object System.Exception ("GetPublicIP: Couldn't grab Public IP for you, you'll have to do it manually",$_.Exception))
+	}
+}
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: ReadGPOValue
+# Description....: Returns the input GPO name state
+# Parameters.....: GPO XML file (as XML), GPO Name to check
+# Return Values..: String, GPO State
+# =================================================================================================================================
 Function ReadGPOValue
 {
 	param(
 		[XML]$gpoXML,
 		[String]$gpoName
 	)
-    $extentionsDataNum = $gpoXML.Rsop.ComputerResults.ExtensionData.Count
 	
+	$PolicyName = ""
+	$PolicyState = ""
+	$PolicyIdentifier = ""
+	$PolicyValue = ""
+	
+	Write-LogMessage -Type Verbose -Msg "Checking '$gpoName' in GPO report..."
+	
+    $extentionsDataNum = $gpoXML.Rsop.ComputerResults.ExtensionData.Count
+	# Search for the gpo in the Extension Data section
 	for ($extentionData = 0; $extentionData -lt $extentionsDataNum; $extentionData++)
 	{
 		$PoliciesNumber =  $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy.Count
@@ -1229,49 +1325,32 @@ Function ReadGPOValue
 				{
 					$PolicyValue = $gpoXML.Rsop.ComputerResults.ExtensionData.Extension.Policy.value.Name
 				}
-
-				return $PolicyState
+				# Exit For
+				break
 			}
-        }
-		$PolicyName = ""
-		$PolicyState = ""
-		$PolicyIdentifier = ""
-		$PolicyValue = ""
-
-        for ($node = 0 ; $node -lt $PoliciesNumber; $node++)
-		{
-			$PolicyName = $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].Name
-
-			if ($PolicyName -eq $gpoName)
+        } else {
+			for ($node = 0 ; $node -lt $PoliciesNumber; $node++)
 			{
-				$PolicyState = $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].State 
-				$PolicyIdentifier = $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].gpo.Identifier.'#text'
+				$PolicyName = $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].Name
 
-				if ($gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].value.Name)
+				if ($PolicyName -eq $gpoName)
 				{
-					$PolicyValue = $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].value.Name
-				}
+					$PolicyState = $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].State 
+					$PolicyIdentifier = $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].gpo.Identifier.'#text'
 
-				return $PolicyState
+					if ($gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].value.Name)
+					{
+						$PolicyValue = $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].value.Name
+					}
+
+					# Exit For
+					break
+				}
 			}
 		}
 	}
-    return ""
-}
-
-Function WriteLogAndReturnCursor($msg)
-{
-
-    Write-Host "                                                                     "
-    $pos = $host.UI.RawUI.CursorPosition
-    $pos.Y -= 1
-    $host.UI.RawUI.CursorPosition =  $pos
-
-    Write-LogMessage -Type Info -Msg $msg $true
-    $pos = $host.UI.RawUI.CursorPosition
-    $pos.Y -= 1
-    $host.UI.RawUI.CursorPosition =  $pos
-
+	Write-LogMessage -Type Verbose -Msg ("Policy Name {0} is in state {1} with current value {2}" -f $PolicyName, $PolicyState, $PolicyValue)
+    return $PolicyState
 }
 
 Function AddLineToTable($action, $resultObject)
@@ -1329,30 +1408,27 @@ Function AddLineToReport($action, $resultObject)
         $line = "$mark $actionPad $errMessage"
         if($errMessage-ne "")
         {
-            Write-LogMessage -Type Warning -Msg $line $true
+            Write-LogMessage -Type Warning -Msg $line
         }
         else
         { 
-            WriteLogS $scriptName $line $true 
+            Write-LogMessage -Type info -Msg $line 
         }
     }
     else
     {
         $mark = '[X]'
         $line = "$mark $actionPad $errMessage"
-        Write-LogMessage -Type Error -Msg $line $true
+        Write-LogMessage -Type Error -Msg $line
     }
-
 }
  
 Function CheckPrerequisites()
 {
-
 	Try
 	{
-
         $cnt = $arrCheckPrerequisites.Count
-		Write-LogMessage -Type Info -SubHeader -Msg "Checking prerequisites start..."
+		Write-LogMessage -Type Info -SubHeader -Msg "Starting checking $cnt prerequisites..."
 		
         $global:table = @()
         $errorCnt = 0
@@ -1363,16 +1439,15 @@ Function CheckPrerequisites()
         {
             Try
             { 
-                WriteLogAndReturnCursor "Checking $method..."
+                Write-Progress -Activity "Checking $method..."
                 $resultObject = &$method  
 
-                if(!$resultObject.result)
+                if($null -eq $resultObject -or !$resultObject.result)
                 {
                     $errorCnt++
                 }
 
-                WriteLogAndReturnCursor ""
-                Write-LogMessage -Type Info -Msg "End $method"      
+                Write-Progress -Activity "$method completed" -Completed      
             }
             Catch
             {
@@ -1382,7 +1457,7 @@ Function CheckPrerequisites()
 
 			if($resultObject.errorMsg -ne $g_SKIP)
 			{
-				AddLineToReport $method $resultObject
+				#AddLineToReport $method $resultObject
 			}
 			else
 			{
@@ -1393,7 +1468,7 @@ Function CheckPrerequisites()
             AddLineToTable $method $resultObject
 		}
         
-        Write-LogMessage -Type Info -Msg "" -Footer
+        Write-LogMessage -Type Info -Msg " " -Footer
 		
         $errorStr = "";
         $warnStr = "";
@@ -1421,29 +1496,24 @@ Function CheckPrerequisites()
 			}
 
 
-			Write-LogMessage -Type Info -Msg "Checking Prerequisites completed with $errorCnt $errorStr and $warnCnt $warnStr " $true
+			Write-LogMessage -Type Info -Msg "Checking Prerequisites completed with $errorCnt $errorStr and $warnCnt $warnStr"
 
-            Write-LogMessage -Type Info -Msg "$SEPARATE_LINE" $true
-            $global:table | Format-Table  -Wrap
+            Write-LogMessage -Type Info -Msg "$SEPARATE_LINE"
+            #$global:table | Format-Table  -Wrap
 
             $table = $global:table | Out-String      
-            Write-LogMessage -Type Info -Msg $table $false 
-            
-			
+            Write-LogMessage -Type Info -Msg $table			
         }
         else
         {
-            WriteLogS $scriptName "Checking Prerequisites completed successfully" $true
+            Write-LogMessage -Type Info -Msg "Checking Prerequisites completed successfully"
         }
 
-        Write-LogMessage -Type Info -Msg "$SEPARATE_LINE" $true
-				
+        Write-LogMessage -Type Info -Msg " " -Footer	
 	}
 	Catch
 	{
-		Write-LogMessage -Type Error -Msg "Failed to run CheckPrerequisites" $true 
-		Write-LogMessage -Type Error -Msg  $_.Exception.Message > $null
-		throw ($_.Exception.Message)
+        Throw $(New-Object System.Exception ("CheckPrerequisites: Failed to run CheckPrerequisites",$_.Exception))
 	}
 }
 
@@ -1461,7 +1531,7 @@ Function Test-VersionUpdate()
 	$pCloudScript = "$pCloudServicesURL/$g_ScriptName"
 	
 	Write-LogMessage -Type Info -Msg "Current version is: $versionNumber"
-	Write-LogMessage -Type Info -Msg "Checking for new version" -ForegroundColor DarkCyan
+	Write-LogMessage -Type Info -Msg "Checking for new version"
 	$checkVersion = ""
 	$checkVersionOK = ""
 	$webVersion = New-Object System.Net.WebClient
@@ -1665,12 +1735,10 @@ Function Collect-ExceptionMessage
 Function Get-LogHeader
 {
     return @"
+	
 ###########################################################################################
 #
 #                       Privilege Cloud Pre-requisites Check PowerShell Script
-#
-#
-#
 #
 # Version : $versionNumber
 # CyberArk Software Ltd.
@@ -1690,30 +1758,41 @@ Function Get-LogHeader
 #troubleshooting section
 if ($Troubleshooting){BindAccount}
 
-Try
-{	
-	Write-LogMessage -Type Info -Msg Get-LogHeader -Header
-	Write-LogMessage -Type Info -Msg "Verify user is a local Admin"
-	$adminUser = IsUserAdmin 
-	
-	# Run only if the User is a local admin on the machine
-	If ($adminUser -eq $False)
-	{
-		Write-LogMessage -Type Error -Msg "You must logged on as a local administrator in order to run this script"
-		return
-	}
-	else
-	{
+Write-LogMessage -Type Info -Msg $(Get-LogHeader) -Header
+Write-LogMessage -Type Verbose -Msg "Verify user is a local Admin"
+$adminUser = IsUserAdmin 
+# Run only if the User is a local admin on the machine
+If ($adminUser -eq $False)
+{
+	Write-LogMessage -Type Error -Msg "You must logged on as a local administrator in order to run this script"
+	return
+}
+else
+{
+	Write-LogMessage -Type Verbose -Msg "User is a local Admin!"
+	try {
+		Write-LogMessage -Type Info -Msg "Checking for latest version"
 		Test-VersionUpdate								# Check the latest version
-		Write-LogMessage -Type Debug -Msg GetPublicIP	# Retrieve public IP and save it locally #TODO: For what do we need the public IP?
+	} catch {
+		Write-LogMessage -Type Error -Msg "Failed to check for latest version - Skipping. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+	try {
+		Write-LogMessage -Type Verbose -Msg $(GetPublicIP)# Retrieve public IP and save it locally #TODO: For what do we need the public IP?
+	} catch {
+		Write-LogMessage -Type Error -Msg "Failed to retrieve public IP - Skipping. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+	try {	
 		CheckPrerequisites  							# Main Pre-requisites check
+	} catch	{
+		Write-LogMessage -Type Error -Msg "Checking prerequisites failed. Error(s): $(Collect-ExceptionMessage $_.Exception)"
+	}
+	try {
 		GetListofDCsAndTestBindAccount					# Retrieve list of available DCs from the current machine joined domain.
+	} catch {
+		Write-LogMessage -Type Error -Msg "Failed to get a list of DC - Skipping. Error: $(Collect-ExceptionMessage $_.Exception)"
 	}
 }
-Catch
-{
-	Write-LogMessage -Type Error -Msg "Checking prerequisites failed. Error(s): $(Collect-ExceptionMessage $_.Exception)"
-}	
+Write-LogMessage -Type Info -Msg "Script Ended" -Footer	
 ###########################################################################################
 # Main end
 ###########################################################################################	
