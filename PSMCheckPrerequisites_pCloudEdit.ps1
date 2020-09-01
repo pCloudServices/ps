@@ -343,7 +343,6 @@ if ($POC){
     $TLS1ClientPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Client"
     $TLS1ServerPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server"
 
-    (Get-ItemProperty $TLS1ClientPath).DisabledByDefault -eq 0
 if ((Test-Path $TLS1ClientPath) -and (Test-Path $TLS1ServerPath)){
     if (((Get-ItemProperty $TLS1ClientPath).Enabled -eq 1) -and ((Get-ItemProperty $TLS1ServerPath).Enabled -eq 1)) 
         { if (((Get-ItemProperty $TLS1ClientPath).DisabledByDefault -eq 0) -and ((Get-ItemProperty $TLS1ServerPath).DisabledByDefault -eq 0))
@@ -364,7 +363,14 @@ if ((Test-Path $TLS1ClientPath) -and (Test-Path $TLS1ServerPath)){
             $result = $false
             $errorMsg = "TLS 1.0 needs to be enabled for POC, if you don't know how to, rerun the script with -Troubleshooting flag"
         }
+
 }
+        else
+        {
+            $actual = $false
+            $result = $false
+            $errorMsg = "TLS 1.0 needs to be enabled for POC, if you don't know how to, rerun the script with -Troubleshooting flag"
+        }
 }
 
 
