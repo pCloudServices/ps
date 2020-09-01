@@ -34,8 +34,10 @@ param
 	[Parameter(Mandatory=$false)][switch]$OutOfDomain,
 	[switch]$Troubleshooting,
 	[Parameter(Mandatory=$true,HelpMessage="Please enter your Vault IP Address (Leave empty if you don't have it)")]
+	[AllowEmptyString()]
 	[String]$VaultIP,
 	[Parameter(Mandatory=$true,HelpMessage="Please enter your TunnelConnector IP Address (Leave empty if you don't have it)")]
+	[AllowEmptyString()]
 	[String]$TunnelIP,
 	[Parameter(Mandatory=$true,HelpMessage="Please enter your provided portal URL Address, Example: https://<customerDomain>.privilegecloud.cyberark.com (Leave empty if you don't have it)")]
 	[ValidateScript({$_ -like "https://*.privilegecloud.cyberark.com"})]
@@ -1195,40 +1197,49 @@ Function Test-NetConnectivity
 	)
 	$errorMsg = ""
 	$result = $False
-    try{
-		If(Get-Command Test-NetConnection -ErrorAction Ignore)
-		{
-			$retNetTest = Test-NetConnection -ComputerName $ComputerName -Port $Port -WarningVariable retWarning | select -ExpandProperty "TcpTestSucceeded"
-			If($retWarning -like "*TCP connect to* failed" -or $retWarning -like "*Name resolution of*")
+	If(![string]::IsNullOrEmpty($ComputerName))
+	{
+		try{
+			If(Get-Command Test-NetConnection -ErrorAction Ignore)
 			{
-				$errorMsg = "Network connectivity failed, check FW rules to '$ComputerName' on port '$Port' are allowed"
-				$result = $False
-			}
-			Else { $result = $True }
-		}
-		Else
-		{
-			# For OS with lower PowerShell version or Windows 2012
-			$tcpClient = New-Object Net.Sockets.TcpClient
-			$tcpClient.ReceiveTimeout = $tcpClient.SendTimeout = 2000;
-			# We use Try\Catch to remove exception info from console if we can't connect
-			try { 
-				$tcpClient.Connect($ComputerName,$Port) 
-				$retNetTest = $tcpClient.Connected
-				if($retNetTest)
-				{
-					$tcpClient.Close()
-					$result = $True
-				}
-				else
+				$retNetTest = Test-NetConnection -ComputerName $ComputerName -Port $Port -WarningVariable retWarning | select -ExpandProperty "TcpTestSucceeded"
+				If($retWarning -like "*TCP connect to* failed" -or $retWarning -like "*Name resolution of*")
 				{
 					$errorMsg = "Network connectivity failed, check FW rules to '$ComputerName' on port '$Port' are allowed"
 					$result = $False
 				}
-			} catch {}
+				Else { $result = $True }
+			}
+			Else
+			{
+				# For OS with lower PowerShell version or Windows 2012
+				$tcpClient = New-Object Net.Sockets.TcpClient
+				$tcpClient.ReceiveTimeout = $tcpClient.SendTimeout = 2000;
+				# We use Try\Catch to remove exception info from console if we can't connect
+				try { 
+					$tcpClient.Connect($ComputerName,$Port) 
+					$retNetTest = $tcpClient.Connected
+					if($retNetTest)
+					{
+						$tcpClient.Close()
+						$result = $True
+					}
+					else
+					{
+						$errorMsg = "Network connectivity failed, check FW rules to '$ComputerName' on port '$Port' are allowed"
+						$result = $False
+					}
+				} catch {}
+			}
+		} catch {
+			$errorMsg = "Could not check network connectivity to '$ComputerName'. Error: $(Collect-ExceptionMessage $_.Exception)"
 		}
-    } catch {
-		$errorMsg = "Could not check network connectivity to '$ComputerName'. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+	Else
+	{
+		$retNetTest = $False
+		Write-LogMessage -Type Info -Msg "Skipping network test since host name is empty"
+		$errorMsg = "Host name empty"
 	}
 	
 	return [PsCustomObject]@{
