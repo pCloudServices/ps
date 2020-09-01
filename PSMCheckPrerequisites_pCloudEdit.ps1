@@ -1,4 +1,4 @@
-﻿ <#
+ <#
   .DESCRIPTION
   Script checks prerequisites on the PSM server.
   .PARAMETER OutOfDomain
@@ -17,13 +17,14 @@
 [cmdletbinding()]
 Param(
 [switch]$OutOfDomain,
-[switch]$Troubleshooting
+[switch]$Troubleshooting,
+[switch]$POC
 )
 
 ## configuration
 ##############################################################
 
-[int]$versionNumber = "11"
+[int]$versionNumber = "12"
 
 ## list of checks to be performed.
 $arrCheckPrerequisites = @(
@@ -40,8 +41,12 @@ $arrCheckPrerequisites = @(
 "UsersLoggedOn",
 "KBs",
 "IPV6",
+"NetworkAdapter",
 "PSRemoting",
+"WinRM",
+"NoPSCustomProfile",
 "CheckNoRDS",
+"CheckTLS1",
 "DomainUser",
 "PendingRestart",
 "NotAzureADJoinedOn2019",
@@ -55,7 +60,9 @@ $arrGPO = @(
 	   [pscustomobject]@{Name='Select RDP transport protocols'; Expected='Disabled'}	
        [pscustomobject]@{Name='Use the specified Remote Desktop license servers'; Expected='Disabled'}   
 	   [pscustomobject]@{Name='Set client connection encryption level'; Expected='Disabled'}
-	   [pscustomobject]@{Name='Use Remote Desktop Easy Print printer driver first'; Expected='Disabled'}
+	   [pscustomobject]@{Name='Use Remote Desktop Easy Print printer driver first'; Expected='Enabled'}
+       [pscustomobject]@{Name='Allow CredSSP authentication'; Expected='Enabled'}
+       [pscustomobject]@{Name='Allow remote server management through WinRM'; Expected='Enabled'}
    )
 
 ##############################################################
@@ -66,7 +73,7 @@ $global:table = ""
 $SEPARATE_LINE = "------------------------------------------------------------------------" 
 $skip = "SKIP"
 
-Function BindAccount{
+Function Troubleshooting{
 Function Connect-LDAPS(){
     [CmdletBinding()]
     param(
@@ -129,6 +136,21 @@ Throw "Problem looking up model account - $($_.Exception.Message)"
 
 $ModelRequest
 }
+Function EnableTLS1(){
+$TLS1ClientPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Client"
+$TLS1ServerPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server"
+
+New-Item -Path $TLS1ClientPath -Force |New-ItemProperty -Name "Enabled" -Value "1" -PropertyType DWORD -Force
+if ((Get-ItemProperty $TLS1ClientPath).Enabled -eq 1){Write-Host "Added $TLS1ClientPath\Enabled" -ForegroundColor Cyan}Else{Write-Host "Couldn't add $TLS1ClientPath\Enabled" -ForegroundColor Yellow}
+New-ItemProperty -Path $TLS1ClientPath -Name "DisabledByDefault" -Value "0" -PropertyType DWORD -Force
+if ((Get-ItemProperty $TLS1ClientPath).DisabledByDefault -eq 0){Write-Host "Added $TLS1ClientPath\DisabledByDefault" -ForegroundColor Cyan}Else{Write-Host "Couldn't add $TLS1ClientPath\DisabledByDefault" -ForegroundColor Yellow}
+New-Item -Path $TLS1ServerPath -Force |New-ItemProperty -Name "Enabled" -Value "1" -PropertyType DWORD -Force
+if ((Get-ItemProperty $TLS1ServerPath).Enabled -eq 1){Write-Host "Added $TLS1ServerPath\Enabled" -ForegroundColor Cyan}Else{Write-Host "Couldn't add $TLS1ServerPath\Enabled" -ForegroundColor Yellow}
+New-ItemProperty -Path $TLS1ServerPath -Name "DisabledByDefault" -Value "0" -PropertyType DWORD -Force
+if ((Get-ItemProperty $TLS1ServerPath).DisabledByDefault -eq 0){Write-Host "Added $TLS1ServerPath\DisabledByDefault" -ForegroundColor Cyan}Else{Write-Host "Couldn't add $TLS1ServerPath\DisabledByDefault" -ForegroundColor Yellow}
+
+Write-Host "Done!" -ForegroundColor Green
+}
 
 function Show-Menu
 {
@@ -136,6 +158,7 @@ function Show-Menu
     Write-Host "================ Troubleshooting Guide ================"
     
     Write-Host "1: Press '1' to Test LDAPS Bind Account" -ForegroundColor Green
+    Write-Host "2: Press '2' to Enable TLS 1.0 (Only for POC)" -ForegroundColor Green
     Write-Host "Q: Press 'Q' to quit."
 }
 
@@ -148,7 +171,9 @@ do
          '1' {
               Connect-LDAPS
              }
-
+         '2' {
+              EnableTLS1
+             }
 
          
      }
@@ -300,6 +325,48 @@ Function CheckNoRDS()
 
 }
 
+Function CheckTLS1(){
+if ($POC){
+    $expected = "True"
+    $actual = ""
+    $errorMsg = ""
+    $result = $false
+    $TLS1ClientPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Client"
+    $TLS1ServerPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server"
+
+    (Get-ItemProperty $TLS1ClientPath).DisabledByDefault -eq 0
+if ((Test-Path $TLS1ClientPath) -and (Test-Path $TLS1ServerPath)){
+    if (((Get-ItemProperty $TLS1ClientPath).Enabled -eq 1) -and ((Get-ItemProperty $TLS1ServerPath).Enabled -eq 1)) 
+        { if (((Get-ItemProperty $TLS1ClientPath).DisabledByDefault -eq 0) -and ((Get-ItemProperty $TLS1ServerPath).DisabledByDefault -eq 0))
+            {
+            $actual = $true
+            $result = $true
+            }
+          else
+            {
+            $actual = $false
+            $result = $false
+            $errorMsg = "TLS 1.0 needs to be enabled for POC, if you don't know how to, rerun the script with -Troubleshooting flag"
+            }
+        }
+        else
+        {
+            $actual = $false
+            $result = $false
+            $errorMsg = "TLS 1.0 needs to be enabled for POC, if you don't know how to, rerun the script with -Troubleshooting flag"
+        }
+}
+}
+
+
+    [PsCustomObject]@{
+        expected = $expected;
+        actual =   $actual;
+        errorMsg = $errorMsg;
+        result = $result;
+    }
+}
+
 function OSVersion()
 {
 
@@ -325,6 +392,34 @@ function OSVersion()
 
     [PsCustomObject]@{
         expected = "Windows Server 2016/2019";
+        actual = $actual;
+        errorMsg = $errorMsg;
+        result = $result;
+    }
+}
+
+function NetworkAdapter()
+{
+    $expected = "False"
+    $actual = ""
+    $result = $false
+    $errorMsg = ""
+
+$actual = (Get-NetAdapter | ? status -ne "Up")
+if ($actual)
+    {
+     $errorMsg = "Not all NICs are up, the installer requires it (you can disable it again afterwards)."
+     $actual = $true
+    }
+else
+{
+$actual = $false
+$result = $true
+}
+
+
+    [PsCustomObject]@{
+        expected = $expected;
         actual = $actual;
         errorMsg = $errorMsg;
         result = $result;
@@ -376,13 +471,15 @@ function PSRemoting()
     $result = $false
 	$errorMsg = ""
 
+$actual = Test-WSMan -ComputerName "localhost" -ErrorAction SilentlyContinue
+if ($actual){
     try 
     {
         $computerName = $env:COMPUTERNAME
         $null = Invoke-Command -ComputerName $computerName -ScriptBlock { ; } -ErrorAction Stop
         $actual = "Enabled"	
         $result = $true
-    } 
+    }
     catch 
     {
         $actual = "Disabled"
@@ -394,13 +491,95 @@ function PSRemoting()
 				$errorMsg = "Detected in 'Protected Users' group in AD, remove from group."
 				}
     }
-    
+}
+else
+{
+$actual = "Disabled"
+$result = $false
+$errorMsg = "Run 'winrm quickconfig' to analyze root cause"
+}
+
+
+
+
+
     [PsCustomObject]@{
         expected = $expected;
         actual = $actual;
         errorMsg = $errorMsg;
         result = $result;
     }
+}
+
+function WinRM()
+{
+    $expected = "True"
+    $actual = ""
+    $errorMsg = ""
+    $result = $false
+    $WinRMService = (Get-Service winrm).Status -eq "Running"
+
+
+if ($WinRMService)
+{
+    if ($getCRredSSP = ((Get-WSManCredSSP) -like "*This computer is not configured*"))
+    {
+    Try{
+      Enable-WSManCredSSP -Role Server -Force  | Out-Null
+      }
+      Catch{
+        if ($Error[0].Exception.Message -like "*The config setting CredSSP cannot be changed because is controlled by policies*")
+            {
+               $errorMsg = "Can't Enable-WSManCredSSP, enforced by GPO."
+               $actual = $false
+               $result = $actual
+            }
+           }
+    }
+    else
+      {
+       $actual = (Get-Item -Path "WSMan:\localhost\Service\Auth\CredSSP").Value
+       if ($actual -eq $true){$result = "True"}
+      }
+}
+else {$errorMsg = "Verify WinRM service is running"}
+
+    [PsCustomObject]@{
+        expected = $expected;
+        actual = $actual;
+        errorMsg = $errorMsg;
+        result = $result;
+        }
+
+}
+
+
+function NoPSCustomProfile()
+{
+    $expected = "False"
+    $actual = ""
+    $errorMsg = ""
+    $result = $true
+
+$profileTypes = "AllUsersAllHosts","AllUsersCurrentHost","CurrentUserAllHosts","CurrentUserCurrentHost"
+
+foreach($profiles in $profileTypes)
+{
+$actual = Test-Path -Path $profile.$profiles
+    if ($actual -eq $true)
+    {
+    $errorMsg = "Custom powershell profile detected, unload it from windows and restart PS instance."
+    $result = $false
+    break
+    }
+}
+
+    [PsCustomObject]@{
+        expected = $expected;
+        actual = $actual;
+        errorMsg = $errorMsg;
+        result = $result;
+        }
 }
 
 function KBs()
@@ -1146,7 +1325,7 @@ $TunnelIPerror = ""
 $TunnelIP = Read-Host "Please enter your TunnelConnector IP Address (Leave empty if you don't have it)"
     If ($TunnelIP) 
     {
-    $actual = Test-NetConnection -ComputerName $TunnelIP -Port 5511 -WarningVariable TunnelIPerror | select -ExpandProperty "TcpTestSucceeded"
+    $actual = Test-NetConnection -ComputerName $TunnelIP -Port 443 -WarningVariable TunnelIPerror | select -ExpandProperty "TcpTestSucceeded"
     $result = $actual
         If ($TunnelIPerror -like "*TCP connect to* failed")
         {
@@ -1261,7 +1440,6 @@ $cert2 = Invoke-WebRequest -Uri http://crl4.digicert.com/CloudFlareIncECCCA2.crl
     {
     if ($Error[0].ErrorDetails.Message -eq "404 - Not Found"){
     $errorMsg = "Can't find CRL file on target site, was it changed? Contact CyberArk"
-    #Write-Host "Can't find CRL file on target site, was it changed? Contact CyberArk"
     }
     $Error[0].Exception.Message
     $errorMsg = "Can't resolve hostname (digicert.com), check DNS settings"
@@ -1531,7 +1709,7 @@ Write-Host "Couldn't check for new script version, resuming in offline mode" -Fo
 
 
     #troubleshooting section
-    if ($Troubleshooting){BindAccount}
+    if ($Troubleshooting){Troubleshooting}
 
 	Try
 	{	
@@ -1570,10 +1748,10 @@ Write-Host "Couldn't check for new script version, resuming in offline mode" -Fo
 
 
 # SIG # Begin signature block
-# MIIfdQYJKoZIhvcNAQcCoIIfZjCCH2ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIIfdgYJKoZIhvcNAQcCoIIfZzCCH2MCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCA48ECGYZqt5n2R
-# 9Y8VVz+oG8dplSrSZcb5mad/B9afEqCCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAZuou7JSMqfgzY
+# k+Ifr3g7WWSLG8KzcANHNIR0wkMvHKCCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
 # NStkZdZqMA0GCSqGSIb3DQEBCwUAMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBH
 # bG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9i
 # YWxTaWduIFJvb3QgQ0EwHhcNMTgwOTE5MDAwMDAwWhcNMjgwMTI4MTIwMDAwWjBM
@@ -1650,92 +1828,92 @@ Write-Host "Couldn't check for new script version, resuming in offline mode" -Fo
 # rIzKAipex1J61Mf44/6Y6gOMGHW7jk84QxMSEbYIglfkHu+RhH8mhYRGKGgHOX3R
 # ViIoIxthvlG08/nTux3zeVnSAmXB5Z8KJ+FTzLyZhFii2i2TLAt/a95dMOb4YquH
 # qK9lmeFCLovYNIAihC7NHBruSGkt/sguM/17JWPpgHpjJxrIZH3dVH41LNPb3Bz2
-# KDHmv37ZRpQvuxAyctrTAPA6HJtuEJnIo6DhFR9LfTGCEFYwghBSAgEBMH4wbjEL
+# KDHmv37ZRpQvuxAyctrTAPA6HJtuEJnIo6DhFR9LfTGCEFcwghBTAgEBMH4wbjEL
 # MAkGA1UEBhMCQkUxGTAXBgNVBAoTEEdsb2JhbFNpZ24gbnYtc2ExRDBCBgNVBAMT
 # O0dsb2JhbFNpZ24gRXh0ZW5kZWQgVmFsaWRhdGlvbiBDb2RlU2lnbmluZyBDQSAt
 # IFNIQTI1NiAtIEczAgwhXYQh+9kPSKH6QS4wDQYJYIZIAWUDBAIBBQCgfDAQBgor
 # BgEEAYI3AgEMMQIwADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEE
-# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgaAj818bBfQbT
-# JintMs6GuDKCvCFsELgBtrDZSlYIqU8wDQYJKoZIhvcNAQEBBQAEggEAlkQZAFLe
-# MvA03GpZrcecwNnhLSYJ6nB+RB/s78+NyR5CQZjxXyPoTmbrdomQgDMaYdPazA9F
-# 8shFGRId2N9/dXaShOXRTJgK+/RwCkldzRI+6cIHdJ9qUaIP/RUQQQ7rC7yhF2ns
-# 98lKluEqwlQvtENTqtLtIX8XvPtMUj/RMyxPCy0vyWJA6NnP6Wn+dsFuDbQ79krD
-# wkdi8juyN+vR0dastgBMJb+E96/PG32yiqQaSnf+y6siAygl7pU8CczhoZZ35mYE
-# hZ3ZWLF8HMcf3S9UtePhuW6WJ50cQeh9HFeOwZrrqhlgRV0oXPDmFGS3iTsROTyp
-# o7QU1DXFGs7JfqGCDiswgg4nBgorBgEEAYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEH
-# AqCCDgQwgg4AAgEDMQ0wCwYJYIZIAWUDBAIBMIH+BgsqhkiG9w0BCRABBKCB7gSB
-# 6zCB6AIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBSR6qM4s71p+SCcUg+J
-# sXEW4rOrkwIUeGnnZdNjPrN5R2mOFRwp+W2KvvoYDzIwMjAwNzA5MDYxODU5WjAD
-# AgEeoIGGpIGDMIGAMQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29y
-# cG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNV
-# BAMTKFN5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzOgggqL
-# MIIFODCCBCCgAwIBAgIQewWx1EloUUT3yYnSnBmdEjANBgkqhkiG9w0BAQsFADCB
-# vTELMAkGA1UEBhMCVVMxFzAVBgNVBAoTDlZlcmlTaWduLCBJbmMuMR8wHQYDVQQL
-# ExZWZXJpU2lnbiBUcnVzdCBOZXR3b3JrMTowOAYDVQQLEzEoYykgMjAwOCBWZXJp
-# U2lnbiwgSW5jLiAtIEZvciBhdXRob3JpemVkIHVzZSBvbmx5MTgwNgYDVQQDEy9W
-# ZXJpU2lnbiBVbml2ZXJzYWwgUm9vdCBDZXJ0aWZpY2F0aW9uIEF1dGhvcml0eTAe
-# Fw0xNjAxMTIwMDAwMDBaFw0zMTAxMTEyMzU5NTlaMHcxCzAJBgNVBAYTAlVTMR0w
-# GwYDVQQKExRTeW1hbnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UECxMWU3ltYW50ZWMg
-# VHJ1c3QgTmV0d29yazEoMCYGA1UEAxMfU3ltYW50ZWMgU0hBMjU2IFRpbWVTdGFt
-# cGluZyBDQTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALtZnVlVT52M
-# cl0agaLrVfOwAa08cawyjwVrhponADKXak3JZBRLKbvC2Sm5Luxjs+HPPwtWkPhi
-# G37rpgfi3n9ebUA41JEG50F8eRzLy60bv9iVkfPw7mz4rZY5Ln/BJ7h4OcWEpe3t
-# r4eOzo3HberSmLU6Hx45ncP0mqj0hOHE0XxxxgYptD/kgw0mw3sIPk35CrczSf/K
-# O9T1sptL4YiZGvXA6TMU1t/HgNuR7v68kldyd/TNqMz+CfWTN76ViGrF3PSxS9TO
-# 6AmRX7WEeTWKeKwZMo8jwTJBG1kOqT6xzPnWK++32OTVHW0ROpL2k8mc40juu1MO
-# 1DaXhnjFoTcCAwEAAaOCAXcwggFzMA4GA1UdDwEB/wQEAwIBBjASBgNVHRMBAf8E
-# CDAGAQH/AgEAMGYGA1UdIARfMF0wWwYLYIZIAYb4RQEHFwMwTDAjBggrBgEFBQcC
-# ARYXaHR0cHM6Ly9kLnN5bWNiLmNvbS9jcHMwJQYIKwYBBQUHAgIwGRoXaHR0cHM6
-# Ly9kLnN5bWNiLmNvbS9ycGEwLgYIKwYBBQUHAQEEIjAgMB4GCCsGAQUFBzABhhJo
-# dHRwOi8vcy5zeW1jZC5jb20wNgYDVR0fBC8wLTAroCmgJ4YlaHR0cDovL3Muc3lt
-# Y2IuY29tL3VuaXZlcnNhbC1yb290LmNybDATBgNVHSUEDDAKBggrBgEFBQcDCDAo
-# BgNVHREEITAfpB0wGzEZMBcGA1UEAxMQVGltZVN0YW1wLTIwNDgtMzAdBgNVHQ4E
-# FgQUr2PWyqNOhXLgp7xB8ymiOH+AdWIwHwYDVR0jBBgwFoAUtnf6aUhHn1MS1cLq
-# BzJ2B9GXBxkwDQYJKoZIhvcNAQELBQADggEBAHXqsC3VNBlcMkX+DuHUT6Z4wW/X
-# 6t3cT/OhyIGI96ePFeZAKa3mXfSi2VZkhHEwKt0eYRdmIFYGmBmNXXHy+Je8Cf0c
-# kUfJ4uiNA/vMkC/WCmxOM+zWtJPITJBjSDlAIcTd1m6JmDy1mJfoqQa3CcmPU1dB
-# kC/hHk1O3MoQeGxCbvC2xfhhXFL1TvZrjfdKer7zzf0D19n2A6gP41P3CnXsxnUu
-# qmaFBJm3+AZX4cYO9uiv2uybGB+queM6AL/OipTLAduexzi7D1Kr0eOUA2AKTaD+
-# J20UMvw/l0Dhv5mJ2+Q5FL3a5NPD6itas5VYVQR9x5rsIwONhSrS/66pYYEwggVL
-# MIIEM6ADAgECAhB71OWvuswHP6EBIwQiQU0SMA0GCSqGSIb3DQEBCwUAMHcxCzAJ
-# BgNVBAYTAlVTMR0wGwYDVQQKExRTeW1hbnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UE
-# CxMWU3ltYW50ZWMgVHJ1c3QgTmV0d29yazEoMCYGA1UEAxMfU3ltYW50ZWMgU0hB
-# MjU2IFRpbWVTdGFtcGluZyBDQTAeFw0xNzEyMjMwMDAwMDBaFw0yOTAzMjIyMzU5
-# NTlaMIGAMQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRp
-# b24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5
-# bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzMwggEiMA0GCSqG
-# SIb3DQEBAQUAA4IBDwAwggEKAoIBAQCvDoqq+Ny/aXtUF3FHCb2NPIH4dBV3Z5Cc
-# /d5OAp5LdvblNj5l1SQgbTD53R2D6T8nSjNObRaK5I1AjSKqvqcLG9IHtjy1GiQo
-# +BtyUT3ICYgmCDr5+kMjdUdwDLNfW48IHXJIV2VNrwI8QPf03TI4kz/lLKbzWSPL
-# gN4TTfkQyaoKGGxVYVfR8QIsxLWr8mwj0p8NDxlsrYViaf1OhcGKUjGrW9jJdFLj
-# V2wiv1V/b8oGqz9KtyJ2ZezsNvKWlYEmLP27mKoBONOvJUCbCVPwKVeFWF7qhUhB
-# IYfl3rTTJrJ7QFNYeY5SMQZNlANFxM48A+y3API6IsW0b+XvsIqbAgMBAAGjggHH
-# MIIBwzAMBgNVHRMBAf8EAjAAMGYGA1UdIARfMF0wWwYLYIZIAYb4RQEHFwMwTDAj
-# BggrBgEFBQcCARYXaHR0cHM6Ly9kLnN5bWNiLmNvbS9jcHMwJQYIKwYBBQUHAgIw
-# GRoXaHR0cHM6Ly9kLnN5bWNiLmNvbS9ycGEwQAYDVR0fBDkwNzA1oDOgMYYvaHR0
-# cDovL3RzLWNybC53cy5zeW1hbnRlYy5jb20vc2hhMjU2LXRzcy1jYS5jcmwwFgYD
-# VR0lAQH/BAwwCgYIKwYBBQUHAwgwDgYDVR0PAQH/BAQDAgeAMHcGCCsGAQUFBwEB
-# BGswaTAqBggrBgEFBQcwAYYeaHR0cDovL3RzLW9jc3Aud3Muc3ltYW50ZWMuY29t
-# MDsGCCsGAQUFBzAChi9odHRwOi8vdHMtYWlhLndzLnN5bWFudGVjLmNvbS9zaGEy
-# NTYtdHNzLWNhLmNlcjAoBgNVHREEITAfpB0wGzEZMBcGA1UEAxMQVGltZVN0YW1w
-# LTIwNDgtNjAdBgNVHQ4EFgQUpRMBqZ+FzBtuFh5fOzGqeTYAex0wHwYDVR0jBBgw
-# FoAUr2PWyqNOhXLgp7xB8ymiOH+AdWIwDQYJKoZIhvcNAQELBQADggEBAEaer/C4
-# ol+imUjPqCdLIc2yuaZycGMv41UpezlGTud+ZQZYi7xXipINCNgQujYk+gp7+zvT
-# Yr9KlBXmgtuKVG3/KP5nz3E/5jMJ2aJZEPQeSv5lzN7Ua+NSKXUASiulzMub6KlN
-# 97QXWZJBw7c/hub2wH9EPEZcF1rjpDvVaSbVIX3hgGd+Yqy3Ti4VmuWcI69bEepx
-# qUH5DXk4qaENz7Sx2j6aescixXTN30cJhsT8kSWyG5bphQjo3ep0YG5gpVZ6DchE
-# WNzm+UgUnuW/3gC9d7GYFHIUJN/HESwfAD/DSxTGZxzMHgajkF9cVIs+4zNbgg/F
-# t4YCTnGf6WZFP3YxggJaMIICVgIBATCBizB3MQswCQYDVQQGEwJVUzEdMBsGA1UE
-# ChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0
-# IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcg
-# Q0ECEHvU5a+6zAc/oQEjBCJBTRIwCwYJYIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJ
-# AzENBgsqhkiG9w0BCRABBDAcBgkqhkiG9w0BCQUxDxcNMjAwNzA5MDYxODU5WjAv
-# BgkqhkiG9w0BCQQxIgQgw9dkgnozC0bfJMbD7HW4wvg4qs+WYh2/xtFuOv6LQMww
-# NwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQgxHTOdgB9AjlODaXk3nwUxoD54oIBPP72
-# U+9dtx/fYfgwCwYJKoZIhvcNAQEBBIIBAEHHHwAjq2hIzycCLhGc6mNBGGI5pWW3
-# dtDQExMsIuCLb0Wh5r4dlDPBbjS04fiCuJHv8MQnjc43dEOHYmbkM/EsOUUX2oeL
-# jtPY24yM8JwU7pWQ/cTcWK+ANQFtMTkIsbKATMHY6WsWfOdxWk0fkxRqF6qW4gm7
-# ebCgUTuX9yKGahiNR7YTJw0Bti9DZ+CwyugG0sd1RvhPSujBGf6ArtbKu2WVGcIH
-# PS8lRSDOZHAYkHp9NqWX0L/qJnIzvdoyWQul3OK0WvsOFh9N1MMEtifxAaUWwlSr
-# NxxBtaU1wTUAWaRVrX5T9Mp14t8+UaKTtKPFt6oMDU4XoVhYnitBPN0=
+# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgOrcSc5Z9O0Jk
+# dqvwud9td8lXcetmPrPi5kkw6qgLO9swDQYJKoZIhvcNAQEBBQAEggEAlTaDQsIL
+# ecpUJTjMtQDeSFKt9sAwuedhSuWc3VlkQJtVFG9HQM2Okr++JI80uh40h9svK+D3
+# zdyShLLEWPbw9YSyjmqrdKDybm6N3ZNajkE2kd3fwOBh5G6XDzx/q7N6PoW1LJoK
+# HZn9anYYLzcV0vc2sCJxP3qysuGJpRhYnhQ8NRVtRSSovSEVABb73kfUpm8HppES
+# zb06PLZ81KCbman0qddrsiOI1nDXKKLUZySV3BcbWFzq6AVdkKF/t4KnbpDCEL54
+# pKkLQM8V+0YfSn70DqgDiENEqDsAHfcFeIG1aSChur1zCelfeHKfbht7VJGOBu/c
+# k0LkyhBZ6iHiW6GCDiwwgg4oBgorBgEEAYI3AwMBMYIOGDCCDhQGCSqGSIb3DQEH
+# AqCCDgUwgg4BAgEDMQ0wCwYJYIZIAWUDBAIBMIH/BgsqhkiG9w0BCRABBKCB7wSB
+# 7DCB6QIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBTxF6UxotcOJ6l22otf
+# sgzGQKJHRAIVAM3AVS6To5TCfcFa6CsMnoHGtLRSGA8yMDIwMDkwMTA3MDA1MVow
+# AwIBHqCBhqSBgzCBgDELMAkGA1UEBhMCVVMxHTAbBgNVBAoTFFN5bWFudGVjIENv
+# cnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYD
+# VQQDEyhTeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIFNpZ25lciAtIEczoIIK
+# izCCBTgwggQgoAMCAQICEHsFsdRJaFFE98mJ0pwZnRIwDQYJKoZIhvcNAQELBQAw
+# gb0xCzAJBgNVBAYTAlVTMRcwFQYDVQQKEw5WZXJpU2lnbiwgSW5jLjEfMB0GA1UE
+# CxMWVmVyaVNpZ24gVHJ1c3QgTmV0d29yazE6MDgGA1UECxMxKGMpIDIwMDggVmVy
+# aVNpZ24sIEluYy4gLSBGb3IgYXV0aG9yaXplZCB1c2Ugb25seTE4MDYGA1UEAxMv
+# VmVyaVNpZ24gVW5pdmVyc2FsIFJvb3QgQ2VydGlmaWNhdGlvbiBBdXRob3JpdHkw
+# HhcNMTYwMTEyMDAwMDAwWhcNMzEwMTExMjM1OTU5WjB3MQswCQYDVQQGEwJVUzEd
+# MBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVj
+# IFRydXN0IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3Rh
+# bXBpbmcgQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC7WZ1ZVU+d
+# jHJdGoGi61XzsAGtPHGsMo8Fa4aaJwAyl2pNyWQUSym7wtkpuS7sY7Phzz8LVpD4
+# Yht+66YH4t5/Xm1AONSRBudBfHkcy8utG7/YlZHz8O5s+K2WOS5/wSe4eDnFhKXt
+# 7a+Hjs6Nx23q0pi1Oh8eOZ3D9Jqo9IThxNF8ccYGKbQ/5IMNJsN7CD5N+Qq3M0n/
+# yjvU9bKbS+GImRr1wOkzFNbfx4Dbke7+vJJXcnf0zajM/gn1kze+lYhqxdz0sUvU
+# zugJkV+1hHk1inisGTKPI8EyQRtZDqk+scz51ivvt9jk1R1tETqS9pPJnONI7rtT
+# DtQ2l4Z4xaE3AgMBAAGjggF3MIIBczAOBgNVHQ8BAf8EBAMCAQYwEgYDVR0TAQH/
+# BAgwBgEB/wIBADBmBgNVHSAEXzBdMFsGC2CGSAGG+EUBBxcDMEwwIwYIKwYBBQUH
+# AgEWF2h0dHBzOi8vZC5zeW1jYi5jb20vY3BzMCUGCCsGAQUFBwICMBkaF2h0dHBz
+# Oi8vZC5zeW1jYi5jb20vcnBhMC4GCCsGAQUFBwEBBCIwIDAeBggrBgEFBQcwAYYS
+# aHR0cDovL3Muc3ltY2QuY29tMDYGA1UdHwQvMC0wK6ApoCeGJWh0dHA6Ly9zLnN5
+# bWNiLmNvbS91bml2ZXJzYWwtcm9vdC5jcmwwEwYDVR0lBAwwCgYIKwYBBQUHAwgw
+# KAYDVR0RBCEwH6QdMBsxGTAXBgNVBAMTEFRpbWVTdGFtcC0yMDQ4LTMwHQYDVR0O
+# BBYEFK9j1sqjToVy4Ke8QfMpojh/gHViMB8GA1UdIwQYMBaAFLZ3+mlIR59TEtXC
+# 6gcydgfRlwcZMA0GCSqGSIb3DQEBCwUAA4IBAQB16rAt1TQZXDJF/g7h1E+meMFv
+# 1+rd3E/zociBiPenjxXmQCmt5l30otlWZIRxMCrdHmEXZiBWBpgZjV1x8viXvAn9
+# HJFHyeLojQP7zJAv1gpsTjPs1rSTyEyQY0g5QCHE3dZuiZg8tZiX6KkGtwnJj1NX
+# QZAv4R5NTtzKEHhsQm7wtsX4YVxS9U72a433Snq+8839A9fZ9gOoD+NT9wp17MZ1
+# LqpmhQSZt/gGV+HGDvbor9rsmxgfqrnjOgC/zoqUywHbnsc4uw9Sq9HjlANgCk2g
+# /idtFDL8P5dA4b+ZidvkORS92uTTw+orWrOVWFUEfcea7CMDjYUq0v+uqWGBMIIF
+# SzCCBDOgAwIBAgIQe9Tlr7rMBz+hASMEIkFNEjANBgkqhkiG9w0BAQsFADB3MQsw
+# CQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNV
+# BAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFudGVjIFNI
+# QTI1NiBUaW1lU3RhbXBpbmcgQ0EwHhcNMTcxMjIzMDAwMDAwWhcNMjkwMzIyMjM1
+# OTU5WjCBgDELMAkGA1UEBhMCVVMxHTAbBgNVBAoTFFN5bWFudGVjIENvcnBvcmF0
+# aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYDVQQDEyhT
+# eW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIFNpZ25lciAtIEczMIIBIjANBgkq
+# hkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArw6Kqvjcv2l7VBdxRwm9jTyB+HQVd2eQ
+# nP3eTgKeS3b25TY+ZdUkIG0w+d0dg+k/J0ozTm0WiuSNQI0iqr6nCxvSB7Y8tRok
+# KPgbclE9yAmIJgg6+fpDI3VHcAyzX1uPCB1ySFdlTa8CPED39N0yOJM/5Sym81kj
+# y4DeE035EMmqChhsVWFX0fECLMS1q/JsI9KfDQ8ZbK2FYmn9ToXBilIxq1vYyXRS
+# 41dsIr9Vf2/KBqs/SrcidmXs7DbylpWBJiz9u5iqATjTryVAmwlT8ClXhVhe6oVI
+# QSGH5d600yaye0BTWHmOUjEGTZQDRcTOPAPstwDyOiLFtG/l77CKmwIDAQABo4IB
+# xzCCAcMwDAYDVR0TAQH/BAIwADBmBgNVHSAEXzBdMFsGC2CGSAGG+EUBBxcDMEww
+# IwYIKwYBBQUHAgEWF2h0dHBzOi8vZC5zeW1jYi5jb20vY3BzMCUGCCsGAQUFBwIC
+# MBkaF2h0dHBzOi8vZC5zeW1jYi5jb20vcnBhMEAGA1UdHwQ5MDcwNaAzoDGGL2h0
+# dHA6Ly90cy1jcmwud3Muc3ltYW50ZWMuY29tL3NoYTI1Ni10c3MtY2EuY3JsMBYG
+# A1UdJQEB/wQMMAoGCCsGAQUFBwMIMA4GA1UdDwEB/wQEAwIHgDB3BggrBgEFBQcB
+# AQRrMGkwKgYIKwYBBQUHMAGGHmh0dHA6Ly90cy1vY3NwLndzLnN5bWFudGVjLmNv
+# bTA7BggrBgEFBQcwAoYvaHR0cDovL3RzLWFpYS53cy5zeW1hbnRlYy5jb20vc2hh
+# MjU2LXRzcy1jYS5jZXIwKAYDVR0RBCEwH6QdMBsxGTAXBgNVBAMTEFRpbWVTdGFt
+# cC0yMDQ4LTYwHQYDVR0OBBYEFKUTAamfhcwbbhYeXzsxqnk2AHsdMB8GA1UdIwQY
+# MBaAFK9j1sqjToVy4Ke8QfMpojh/gHViMA0GCSqGSIb3DQEBCwUAA4IBAQBGnq/w
+# uKJfoplIz6gnSyHNsrmmcnBjL+NVKXs5Rk7nfmUGWIu8V4qSDQjYELo2JPoKe/s7
+# 02K/SpQV5oLbilRt/yj+Z89xP+YzCdmiWRD0Hkr+Zcze1GvjUil1AEorpczLm+ip
+# Tfe0F1mSQcO3P4bm9sB/RDxGXBda46Q71Wkm1SF94YBnfmKst04uFZrlnCOvWxHq
+# calB+Q15OKmhDc+0sdo+mnrHIsV0zd9HCYbE/JElshuW6YUI6N3qdGBuYKVWeg3I
+# RFjc5vlIFJ7lv94AvXexmBRyFCTfxxEsHwA/w0sUxmcczB4Go5BfXFSLPuMzW4IP
+# xbeGAk5xn+lmRT92MYICWjCCAlYCAQEwgYswdzELMAkGA1UEBhMCVVMxHTAbBgNV
+# BAoTFFN5bWFudGVjIENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVz
+# dCBOZXR3b3JrMSgwJgYDVQQDEx9TeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5n
+# IENBAhB71OWvuswHP6EBIwQiQU0SMAsGCWCGSAFlAwQCAaCBpDAaBgkqhkiG9w0B
+# CQMxDQYLKoZIhvcNAQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTIwMDkwMTA3MDA1MVow
+# LwYJKoZIhvcNAQkEMSIEIII2iW2Qa5P3TEs+dYe9GSofX0P2A/HVqeLwj446f/GX
+# MDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIEIMR0znYAfQI5Tg2l5N58FMaA+eKCATz+
+# 9lPvXbcf32H4MAsGCSqGSIb3DQEBAQSCAQASQvXgOzLFmRXyLOglk+cQk5rsiIqy
+# Xf+8Qt0P2UABH+/cAN6Miyrdsewlntt1fYqtz0vP5k4puwrDgNF1mpAW4NrW3752
+# 6XYnhp1XAhnQ2XDGWr/qhzxphFQnkmC1J24UN9k/3TVJF9F2neirHBTvCkSIjr/f
+# gBxoLZJf3UYV/WfY/tZUeuEiqFeAfXSl/2o/M1os931Ad0TKzYfBbXnXPXWq2IGs
+# SbC+lAct2kAr8aQL6mOCFFv2DzgHJIoV3CaXq04SRl1B9x+EPWa9tQUTtl93ytwf
+# a0HDKUOGAbnnfu2u4JffQyss5d6PraPYltlj89A0E3NFiHcZe+nZ/SJK
 # SIG # End signature block
