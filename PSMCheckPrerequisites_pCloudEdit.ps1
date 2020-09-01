@@ -1289,7 +1289,7 @@ Function GetPublicIP()
 		Write-LogMessage -Type Info -Msg "Attempting to retrieve Public IP, this can take up to 15 secs."
 		$PublicIP = (Invoke-WebRequest -Uri ipinfo.io/ip -UseBasicParsing -TimeoutSec 5).Content
 		$PublicIP | Out-File "$($env:COMPUTERNAME) PublicIP.txt"
-		Write-LogMessage -Type Info -Msg "Successfully fetched Public IP: $PublicIP and saved it in a local file '$($env:COMPUTERNAME) PublicIP.txt'"
+		Write-LogMessage -Type Success -Msg "Successfully fetched Public IP: $PublicIP and saved it in a local file '$($env:COMPUTERNAME) PublicIP.txt'"
 		return $PublicIP
 	}
 	catch{
@@ -1423,7 +1423,7 @@ Function AddLineToReport($action, $resultObject)
         }
         else
         { 
-            Write-LogMessage -Type info -Msg $line 
+            Write-LogMessage -Type Success -Msg $line 
         }
     }
     else
@@ -1517,7 +1517,7 @@ Function CheckPrerequisites()
         }
         else
         {
-            Write-LogMessage -Type Info -Msg "Checking Prerequisites completed successfully"
+            Write-LogMessage -Type Success -Msg "Checking Prerequisites completed successfully"
         }
 
         Write-LogMessage -Type Info -Msg " " -Footer	
@@ -1634,7 +1634,7 @@ Function Write-LogMessage
 		[Parameter(Mandatory=$false)]
 		[Switch]$Footer,
 		[Parameter(Mandatory=$false)]
-		[ValidateSet("Info","Warning","Error","Debug","Verbose")]
+		[ValidateSet("Info","Warning","Error","Debug","Verbose", "Success")]
 		[String]$type = "Info",
 		[Parameter(Mandatory=$false)]
 		[String]$LogFile = $LOG_FILE_PATH
@@ -1642,11 +1642,11 @@ Function Write-LogMessage
 	Try{
 		If ($Header) {
 			"=======================================" | Out-File -Append -FilePath $LogFile 
-			Write-Host "======================================="
+			Write-Host "=======================================" -ForegroundColor Magenta
 		}
 		ElseIf($SubHeader) { 
 			"------------------------------------" | Out-File -Append -FilePath $LogFile 
-			Write-Host "------------------------------------"
+			Write-Host "------------------------------------" -ForegroundColor Magenta
 		}
 		
 		$msgToWrite = "[$(Get-Date -Format "yyyy-MM-dd hh:mm:ss")]`t"
@@ -1663,11 +1663,15 @@ Function Write-LogMessage
 		switch ($type)
 		{
 			"Info" { 
-				Write-Host $MSG.ToString()
+				Write-Host $MSG.ToString() -ForegroundColor $(If($Header -or $SubHeader) { "Magenta" } Else { "White" })
 				$msgToWrite += "[INFO]`t$Msg"
 			}
+			"Success" { 
+				Write-Host $MSG.ToString() -ForegroundColor Green
+				$msgToWrite += "[SUCCESS]`t$Msg"
+			}
 			"Warning" {
-				Write-Host $MSG.ToString() -ForegroundColor DarkYellow
+				Write-Host $MSG.ToString() -ForegroundColor Yellow
 				$msgToWrite += "[WARNING]`t$Msg"
 			}
 			"Error" {
@@ -1695,7 +1699,7 @@ Function Write-LogMessage
 		If($writeToFile) { $msgToWrite | Out-File -Append -FilePath $LogFile }
 		If ($Footer) { 
 			"=======================================" | Out-File -Append -FilePath $LogFile 
-			Write-Host "======================================="
+			Write-Host "=======================================" -ForegroundColor Magenta
 		}
 	}
 	catch{
