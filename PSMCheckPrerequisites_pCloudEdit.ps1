@@ -11,43 +11,75 @@
 # CyberArk PVWA v10.4 and above
 #
 ###########################################################################
-[CmdletBinding(DefaultParameterSetName="")]
+[CmdletBinding(DefaultParameterSetName="Regualr")]
  <#
   .DESCRIPTION
   Script checks prerequisites for Privilege Cloud Connector machine
   
   .PARAMETER OutOfDomain
  
-  .EXAMPLE1 
+  .EXAMPLE 
   PS C:\> .\PSMCheckPrerequisites.ps1
   
-  .EXAMPLE2 - Run checks if machine is out of domain
+  .EXAMPLE - Run checks if machine is out of domain
   PS C:\> .\PSMCheckPrerequisites.ps1 -OutOfDomain
 
-  .EXAMPLE2 - Troubleshoot certain components
+  .EXAMPLE - Troubleshoot certain components
   PS C:\> .\PSMCheckPrerequisites.ps1 -Troubleshooting
+  
+  .EXAMPLE - Run in POC mode
+  PS C:\> .\PSMCheckPrerequisites.ps1 -POC
   
 #>
 param
 (
-	# Use this switch to Simulate with no change
-	[Parameter(Mandatory=$false)][switch]$OutOfDomain,
+	# Use this switch to Exclude the Domain user check
+	[Parameter(ParameterSetName='Regualr',Mandatory=$false)]
+	[switch]$OutOfDomain,
+	# Use this switch to run an additional tests for POC
+	[Parameter(ParameterSetName='Regualr',Mandatory=$false)]
+	[switch]$POC,
+	# Use this switch to troubleshoot specific items
+	[Parameter(ParameterSetName='Troubleshoot',Mandatory=$false)]
 	[switch]$Troubleshooting,
-	[Parameter(Mandatory=$true,HelpMessage="Please enter your Vault IP Address (Leave empty if you don't have it)")]
+	# Get the Vault IP
+	[Parameter(ParameterSetName='Regualr',Mandatory=$true)]
 	[AllowEmptyString()]
-	[String]$VaultIP,
-	[Parameter(Mandatory=$true,HelpMessage="Please enter your TunnelConnector IP Address (Leave empty if you don't have it)")]
+	[Alias("VaultIP")]
+	[String]${Please enter your Vault IP Address (Or leave empty)},
+	# Get the Tunnel IP
+	[Parameter(ParameterSetName='Regualr',Mandatory=$true)]
 	[AllowEmptyString()]
-	[String]$TunnelIP,
-	[Parameter(Mandatory=$true,HelpMessage="Please enter your provided portal URL Address, Example: https://<customerDomain>.privilegecloud.cyberark.com (Leave empty if you don't have it)")]
-	[ValidateScript({$_ -like "https://*.privilegecloud.cyberark.com"})]
-	[String]$PortalURL
+	[Alias("TunnelIP")]
+	[String]${Please enter your Tunnel Connector IP Address (Or leave empty)},
+	# Get the Portal URL
+	[Parameter(ParameterSetName='Regualr',Mandatory=$true)]
+	[ValidateScript({
+		If(![string]::IsNullOrEmpty($_)) {
+			$_ -like "https://*.privilegecloud.cyberark.com"
+		}
+		Else { $true }
+	})]
+	[AllowEmptyString()]
+	[Alias("PortalURL")]
+	[String]${Please enter your provided portal URL Address, Example: https://<customerDomain>.privilegecloud.cyberark.com (Or leave empty)}
 )
+
+# ------ Copy parameter values entered ------
+$VaultIP = ${Please enter your Vault IP Address (Or leave empty)}
+$TunnelIP = ${Please enter your Tunnel Connector IP Address (Or leave empty)}
+$PortalURL = ${Please enter your provided portal URL Address, Example: https://<customerDomain>.privilegecloud.cyberark.com (Or leave empty)}
 
 # ------ SET Script Prerequisites ------
 ##############################################################
 
-# Enter the list of checks to be performed.
+## List of checks to be performed on POC
+$arrCheckPrerequisitesPOC = @("CheckTLS1")
+
+## List of checks to be excluded when machine is out of domain
+$arrCheckPrerequisitesOutOfDomain = @("DomainUser")
+
+## List of checks to be performed on every run of the script
 $arrCheckPrerequisites = @(
 "VaultConnectivity",
 "TunnelConnectivity",
@@ -62,23 +94,37 @@ $arrCheckPrerequisites = @(
 "UsersLoggedOn",
 "KBs",
 "IPV6",
+"NetworkAdapter",
 "PSRemoting",
+"WinRM",
+"NoPSCustomProfile",
 "CheckNoRDS",
-"DomainUser",
 "PendingRestart",
 "NotAzureADJoinedOn2019",
 "GPO"
 )
 
 
-## Enter the list of GPOs to check.
+## Combine Checks from POC with regular checks
+If (-not $OutOfDomain){
+	$arrCheckPrerequisites += $arrCheckPrerequisitesOutOfDomain
+}
+## Combine Checks from POC with regular checks
+If ($POC){
+	$arrCheckPrerequisites += $arrCheckPrerequisitesPOC
+}
+
+## List of GPOs to check
 $arrGPO = @(
        [pscustomobject]@{Name='Require user authentication for remote connections by using Network Level Authentication';Expected='Disabled'}
 	   [pscustomobject]@{Name='Select RDP transport protocols'; Expected='Disabled'}	
        [pscustomobject]@{Name='Use the specified Remote Desktop license servers'; Expected='Disabled'}   
 	   [pscustomobject]@{Name='Set client connection encryption level'; Expected='Disabled'}
-	   [pscustomobject]@{Name='Use Remote Desktop Easy Print printer driver first'; Expected='Disabled'}
+	   [pscustomobject]@{Name='Use Remote Desktop Easy Print printer driver first'; Expected='Enabled'}
+       [pscustomobject]@{Name='Allow CredSSP authentication'; Expected='Enabled'}
+       [pscustomobject]@{Name='Allow remote server management through WinRM'; Expected='Enabled'}
    )
+
 
 ##############################################################
 
@@ -89,7 +135,7 @@ $global:InDebug = $PSBoundParameters.Debug.IsPresent
 $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 
 # Script Version
-[int]$versionNumber = "11"
+[int]$versionNumber = "12"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -105,12 +151,12 @@ $SEPARATE_LINE = "--------------------------------------------------------------
 $g_SKIP = "SKIP"
 
 #region Troubleshooting
-Function BindAccount{
+Function Troubleshooting{
 Function Connect-LDAPS(){
     [CmdletBinding()]
     param(
         [parameter(Mandatory=$false)][string] $hostname = (Read-Host -Prompt "Enter Hostname (eg; cyberarkdemo.com)"),
-        [parameter(Mandatory=$false)][int] $Port = (read-host -Prompt "Enter Port($("636"))"),
+        [parameter(Mandatory=$false)][int] $Port = (Read-Host -Prompt "Enter Port($("636"))"),
         [parameter(Mandatory=$false)][string] $username = (Read-Host -Prompt "Enter Username (eg; svc_cyberark)")
     )
     
@@ -169,12 +215,42 @@ Throw "Problem looking up model account - $($_.Exception.Message)"
 $ModelRequest
 }
 
-function Show-Menu
+Function EnableTLS1()
+{
+	$TLS1ClientPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Client"
+	$TLS1ServerPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server"
+	ForEach ($tlsPath in @($TLS1ClientPath, $TLS1ServerPath))
+	{
+		If(-not (Test-Path $TLS1ClientPath))
+		{
+			New-Item -Path $tlsPath -Force 
+		}
+		New-ItemProperty -Path $tlsPath -Name "Enabled" -Value "1" -PropertyType DWORD -Force
+		if ((Get-ItemProperty $tlsPath).Enabled -eq 1)
+		{
+			Write-LogMessage -Type Success -Msg "Added $tlsPath\Enabled"
+		}Else{
+			Write-LogMessage -Type Warning -Msg "Couldn't add $tlsPath\Enabled"
+		}
+		New-ItemProperty -Path $tlsPath -Name "DisabledByDefault" -Value "0" -PropertyType DWORD -Force
+		if ((Get-ItemProperty $tlsPath).DisabledByDefault -eq 0)
+		{
+			Write-LogMessage -Type Success -Msg "Added $tlsPath\DisabledByDefault"
+		}Else{
+			Write-LogMessage -Type Warning -Msg "Couldn't add $tlsPath\DisabledByDefault"
+		}
+	}
+	
+	Write-LogMessage -Type Success -Msg "Done!"
+}
+
+Function Show-Menu
 {
     Clear-Host
     Write-Host "================ Troubleshooting Guide ================"
     
     Write-Host "1: Press '1' to Test LDAPS Bind Account" -ForegroundColor Green
+    Write-Host "2: Press '2' to Enable TLS 1.0 (Only for POC)" -ForegroundColor Green
     Write-Host "Q: Press 'Q' to quit."
 }
 
@@ -188,14 +264,16 @@ do
               Connect-LDAPS
              }
 
-
-         
+		'2' {
+              EnableTLS1
+             } 
      }
      pause
  }
  until ($selection -eq 'q')
- exit
- }
+ return
+}
+#endregion
 
 Function GetListofDCsAndTestBindAccount()
 {
@@ -293,8 +371,6 @@ Test-LDAP |format-table| Tee-Object -file "$PSScriptRoot\DCInfo.txt"
 }
 }
 
-#endregion
-
 #region Prerequisites methods
 # @FUNCTION@ ======================================================================================================================
 # Name...........: CheckNoRDS
@@ -327,6 +403,61 @@ Function CheckNoRDS
 		errorMsg = $errorMsg;
 		result = $result;
 	}      
+}
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: CheckTLS1
+# Description....: Check If TLS1 is enabled or not
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+Function CheckTLS1
+{
+	[OutputType([PsCustomObject])]
+	param ()
+	try{
+		Write-LogMessage -Type Verbose -Msg "Starting CheckTLS1..."
+		$actual = ""
+		$errorMsg = ""
+		$result = $false
+		
+		if ($POC)
+		{
+			$TLS1ClientPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Client"
+			$TLS1ServerPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server"
+			ForEach ($tlsPath in @($TLS1ClientPath, $TLS1ServerPath))
+			{
+				$chkEnabled = $chkDisabledByDefault = $false
+				If(Test-Path $tlsPath)
+				{
+					$chkEnabled = ((Get-ItemProperty $tlsPath).Enabled -eq 1)
+					$chkDisabledByDefault = ((Get-ItemProperty $tlsPath).DisabledByDefault -eq 0)
+				}
+				If($chkEnabled -and $chkDisabledByDefault)
+				{
+					$actual = $true
+					$result = $true
+				}
+				Else
+				{
+					$actual = $false
+					$result = $false
+					$errorMsg = "TLS 1.0 needs to be enabled for POC, if you don't know how to, rerun the script with -Troubleshooting flag"
+					break
+				}
+			}
+		}
+		Write-LogMessage -Type Verbose -Msg "Finished CheckTLS1"
+	} catch {
+		$errorMsg = "Could not check if TLS is enabled. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+		
+	return [PsCustomObject]@{
+		expected = $True;
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	} 
 }
 
 # @FUNCTION@ ======================================================================================================================
@@ -365,6 +496,46 @@ Function OSVersion
 		
 	return [PsCustomObject]@{
 		expected = "Windows Server 2016/2019";
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: NetworkAdapter
+# Description....: Check if all network adapters are Up
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+Function NetworkAdapter
+{
+	[OutputType([PsCustomObject])]
+	param ()
+	try{
+		Write-LogMessage -Type Verbose -Msg "Starting NetworkAdapter..."
+		$actual = ""
+		$result = $false
+		$errorMsg = ""
+
+		$actual = (Get-NetAdapter | ? status -ne "Up")
+		if ($actual)
+		{
+			$errorMsg = "Not all NICs are up, the installer requires it (you can disable it again afterwards)."
+			$actual = $true
+		}
+		else
+		{
+			$actual = $false
+			$result = $true
+		}
+		Write-LogMessage -Type Verbose -Msg "Finished NetworkAdapter"
+	} catch {
+		$errorMsg = "Could not get Network Adapter Status. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+	
+	return [PsCustomObject]@{
+		expected = "False";
 		actual = $actual;
 		errorMsg = $errorMsg;
 		result = $result;
@@ -440,39 +611,145 @@ Function PSRemoting
 		$actual = ""	
 		$result = $false
 		$errorMsg = ""
-
-		try 
+		If($(Test-WSMan -ComputerName "localhost" -ErrorAction SilentlyContinue))
 		{
-			Invoke-Command -ComputerName $env:COMPUTERNAME -ScriptBlock { ; } -ErrorAction Stop | out-null
-			$actual = "Enabled"	
-			$result = $true
-		} 
-		catch 
-		{
+			try 
+			{
+				Invoke-Command -ComputerName $env:COMPUTERNAME -ScriptBlock { ; } -ErrorAction Stop | out-null
+				$actual = "Enabled"	
+				$result = $true
+			} 
+			catch 
+			{
+				$actual = "Disabled"
+				$result = $false
+				
+				$UserMemberOfProtectedGroup = $(Get-UserPrincipal).GetGroups().Name -match "Protected Users"
+				if ($UserMemberOfProtectedGroup)
+				{
+					$errorMsg = "Current user was detected in 'Protected Users' group in AD, remove from group."
+				}
+				else
+				{
+					$errorMsg = "Could not connect using PSRemoting to $($env:COMPUTERNAME)"
+				}
+			}
+		} Else {
 			$actual = "Disabled"
 			$result = $false
-			
-			$UserMemberOfProtectedGroup = $(Get-UserPrincipal).GetGroups().Name -match "Protected Users"
-			if ($UserMemberOfProtectedGroup)
-			{
-				$errorMsg = "Current user was detected in 'Protected Users' group in AD, remove from group."
-			}
-			else
-			{
-				$errorMsg = "Could not connect using PSRemoting to $($env:COMPUTERNAME)"
-			}
+			$errorMsg = "Run 'winrm quickconfig' to analyze root cause"
 		}
 		Write-LogMessage -Type Verbose -Msg "Finished PSRemoting"	
 	} catch {
 		$errorMsg = "Could not get PSRemoting Status. Error: $(Collect-ExceptionMessage $_.Exception)"
 	}
 	
-		return [PsCustomObject]@{
-			expected = "Enabled";
-			actual = $actual;
-			errorMsg = $errorMsg;
-			result = $result;
+	return [PsCustomObject]@{
+		expected = "Enabled";
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: WinRM
+# Description....: Check if WinRM is enabled or not
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+Function WinRM
+{
+	[OutputType([PsCustomObject])]
+	param ()
+	try{
+		Write-LogMessage -Type Verbose -Msg "Starting WinRM..."
+		$actual = ""	
+		$result = $false
+		$errorMsg = ""
+		$WinRMService = (Get-Service winrm).Status -eq "Running"
+
+		if ($WinRMService)
+		{
+			if ($getCRredSSP = ((Get-WSManCredSSP) -like "*This computer is not configured*"))
+			{
+				try {
+					Enable-WSManCredSSP -Role Server -Force  | Out-Null
+				} catch {
+					if ($_.Exception.Message -like "*The config setting CredSSP cannot be changed because is controlled by policies*")
+					{
+						$errorMsg = "Can't Enable-WSManCredSSP, enforced by GPO."
+					}
+					Else
+					{
+						$errorMsg = $_.Exception.Message
+					}
+					$actual = $false
+					$result = $actual
+			   }
+			}
+			else
+			{
+			   $actual = (Get-Item -Path "WSMan:\localhost\Service\Auth\CredSSP").Value
+			   if ($actual -eq $true){$result = "True"}
+			}
 		}
+		else 
+		{
+			$errorMsg = "Verify WinRM service is running"
+		}
+	
+		Write-LogMessage -Type Verbose -Msg "Finished WinRM"	
+	} catch {
+		$errorMsg = "Could not get WinRM Status. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+	
+	return [PsCustomObject]@{
+		expected = "True";
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: NoPSCustomProfile
+# Description....: Check if there is no PowerShell custom profile
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+function NoPSCustomProfile
+{
+	[OutputType([PsCustomObject])]
+	param ()
+	try{
+		Write-LogMessage -Type Verbose -Msg "Starting NoPSCustomProfile..."
+		$actual = ""
+		$errorMsg = ""
+		$result = $true
+
+		$profileTypes = "AllUsersAllHosts","AllUsersCurrentHost","CurrentUserAllHosts","CurrentUserCurrentHost"
+
+		ForEach($profiles in $profileTypes)
+		{
+			if (Test-Path -Path $profile.$profiles)
+			{
+				$errorMsg = "Custom powershell profile detected, unload it from Windows and restart PS instance."
+				$result = $false
+				break
+			}
+		}
+		Write-LogMessage -Type Verbose -Msg "Finished NoPSCustomProfile"	
+	} catch {
+		$errorMsg = "Could not get PowerShell custom profile Status. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+	
+	return [PsCustomObject]@{
+		expected = "False";
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
 }
 
 # @FUNCTION@ ======================================================================================================================
@@ -847,7 +1124,7 @@ Function TunnelConnectivity
 	[OutputType([PsCustomObject])]
 	param ()
 	Write-LogMessage -Type Verbose -Msg "Running TunnelConnectivity"
-    return Test-NetConnectivity -ComputerName $TunnelIP -Port 5511
+    return Test-NetConnectivity -ComputerName $TunnelIP -Port 443
 }
 
 # @FUNCTION@ ======================================================================================================================
@@ -1468,7 +1745,7 @@ Function CheckPrerequisites()
 
 			if($resultObject.errorMsg -ne $g_SKIP)
 			{
-				#AddLineToReport $method $resultObject
+				AddLineToReport $method $resultObject
 			}
 			else
 			{
@@ -1512,8 +1789,7 @@ Function CheckPrerequisites()
             Write-LogMessage -Type Info -Msg "$SEPARATE_LINE"
             $global:table | Format-Table -Wrap
 
-            $table = $global:table | Out-String 
-            Write-LogMessage -Type Info -Msg $table			
+            Write-LogMessage -Type LogOnly -Msg $($global:table | Out-String)
         }
         else
         {
@@ -1634,7 +1910,7 @@ Function Write-LogMessage
 		[Parameter(Mandatory=$false)]
 		[Switch]$Footer,
 		[Parameter(Mandatory=$false)]
-		[ValidateSet("Info","Warning","Error","Debug","Verbose", "Success")]
+		[ValidateSet("Info","Warning","Error","Debug","Verbose", "Success", "LogOnly")]
 		[String]$type = "Info",
 		[Parameter(Mandatory=$false)]
 		[String]$LogFile = $LOG_FILE_PATH
@@ -1662,8 +1938,12 @@ Function Write-LogMessage
 		# Check the message type
 		switch ($type)
 		{
-			"Info" { 
-				Write-Host $MSG.ToString() -ForegroundColor $(If($Header -or $SubHeader) { "Magenta" } Else { "White" })
+			{($_ -eq "Info") -or ($_ -eq "LogOnly")} 
+			{ 
+				If($_ -eq "Info")
+				{
+					Write-Host $MSG.ToString() -ForegroundColor $(If($Header -or $SubHeader) { "Magenta" } Else { "White" })
+				}
 				$msgToWrite += "[INFO]`t$Msg"
 			}
 			"Success" { 
@@ -1771,7 +2051,7 @@ Function Get-LogHeader
 
 
 #troubleshooting section
-if ($Troubleshooting){BindAccount}
+if ($Troubleshooting){Troubleshooting}
 
 Write-LogMessage -Type Info -Msg $(Get-LogHeader) -Header
 Write-LogMessage -Type Verbose -Msg "Verify user is a local Admin"
