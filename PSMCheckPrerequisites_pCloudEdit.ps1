@@ -1510,9 +1510,9 @@ Function CheckPrerequisites()
 			Write-LogMessage -Type Info -Msg "Checking Prerequisites completed with $errorCnt $errorStr and $warnCnt $warnStr"
 
             Write-LogMessage -Type Info -Msg "$SEPARATE_LINE"
-            #$global:table | Format-Table  -Wrap
+            $global:table | Format-Table -Wrap
 
-            $table = $global:table | Out-String      
+            $table = $global:table | Out-String 
             Write-LogMessage -Type Info -Msg $table			
         }
         else
