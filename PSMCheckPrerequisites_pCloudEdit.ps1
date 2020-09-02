@@ -271,7 +271,7 @@ do
      pause
  }
  until ($selection -eq 'q')
- return
+ exit
 }
 #endregion
 
