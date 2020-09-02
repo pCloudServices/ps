@@ -221,7 +221,7 @@ Function EnableTLS1()
 	$TLS1ServerPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server"
 	ForEach ($tlsPath in @($TLS1ClientPath, $TLS1ServerPath))
 	{
-		If(-not (Test-Path $TLS1ClientPath))
+		If(-not (Test-Path $tlsPath))
 		{
 			New-Item -Path $tlsPath -Force 
 		}
