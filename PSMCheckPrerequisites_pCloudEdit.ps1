@@ -1186,7 +1186,6 @@ Function ConsoleHTTPConnectivity
 		
 		$CustomerGenericGET = 0
 		Try{
-			#TODO: is it OK that we have here a constant customer ID? should we get he current customer ID?
 			$connectorConfigURL = "https://$g_ConsoleIP/connectorConfig/v1?customerId=35741f0e-71fe-4c1a-97c8-28594bf1281d&configItem=environmentFQDN"
 			$CustomerGenericGET = Invoke-RestMethod -Uri $connectorConfigURL -TimeoutSec 20 -ContentType 'application/json'
 			If($null -ne $CustomerGenericGET)
@@ -2102,7 +2101,7 @@ else
 		Write-LogMessage -Type Error -Msg "Failed to check for latest version - Skipping. Error: $(Collect-ExceptionMessage $_.Exception)"
 	}
 	try {
-		Write-LogMessage -Type Verbose -Msg $(GetPublicIP)# Retrieve public IP and save it locally #TODO: For what do we need the public IP?
+		Write-LogMessage -Type Verbose -Msg $(GetPublicIP)# Retrieve public IP and save it locally
 	} catch {
 		Write-LogMessage -Type Error -Msg "Failed to retrieve public IP - Skipping. Error: $(Collect-ExceptionMessage $_.Exception)"
 	}
