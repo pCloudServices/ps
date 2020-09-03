@@ -1,4 +1,5 @@
-﻿###########################################################################
+
+###########################################################################
 #
 # NAME: Privilege Cloud Prerequisites check
 #
@@ -7,8 +8,6 @@
 # COMMENT: 
 # Script checks prerequisites for Privilege Cloud Connector machine
 #
-# SUPPORTED VERSIONS:
-# CyberArk PVWA v10.4 and above
 #
 ###########################################################################
 [CmdletBinding(DefaultParameterSetName="Regualr")]
@@ -26,11 +25,15 @@
 
   .EXAMPLE - Troubleshoot certain components
   PS C:\> .\PSMCheckPrerequisites.ps1 -Troubleshooting
+
+  .EXAMPLE3 - Run with POC mode
+  PS C:\> .\PSMCheckPrerequisites.ps1 -POC
   
   .EXAMPLE - Run in POC mode
   PS C:\> .\PSMCheckPrerequisites.ps1 -POC
   
 #>
+
 param
 (
 	# Use this switch to Exclude the Domain user check
@@ -63,7 +66,7 @@ param
 	[AllowEmptyString()]
 	[Alias("PortalURL")]
 	[String]${Please enter your provided portal URL Address, Example: https://<customerDomain>.privilegecloud.cyberark.com (Or leave empty)}
-)
+ )
 
 # ------ Copy parameter values entered ------
 $VaultIP = ${Please enter your Vault IP Address (Or leave empty)}
@@ -72,6 +75,7 @@ $PortalURL = ${Please enter your provided portal URL Address, Example: https://<
 
 # ------ SET Script Prerequisites ------
 ##############################################################
+
 
 ## List of checks to be performed on POC
 $arrCheckPrerequisitesPOC = @("CheckTLS1")
@@ -104,6 +108,10 @@ $arrCheckPrerequisites = @(
 "GPO"
 )
 
+#Combine Checks from POC with regular checks
+If ($POC){
+$arrCheckPrerequisites = $arrCheckPrerequisites + $arrCheckPrerequisitesPOC
+}
 
 ## Combine Checks from POC with regular checks
 If (-not $OutOfDomain){
@@ -149,6 +157,7 @@ $global:g_ScriptName = "PSMCheckPrerequisites_pCloudEdit.ps1"
 $global:table = ""
 $SEPARATE_LINE = "------------------------------------------------------------------------" 
 $g_SKIP = "SKIP"
+
 
 #region Troubleshooting
 Function Troubleshooting{
@@ -214,6 +223,21 @@ Throw "Problem looking up model account - $($_.Exception.Message)"
 
 $ModelRequest
 }
+Function EnableTLS1(){
+$TLS1ClientPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Client"
+$TLS1ServerPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server"
+
+New-Item -Path $TLS1ClientPath -Force |New-ItemProperty -Name "Enabled" -Value "1" -PropertyType DWORD -Force
+if ((Get-ItemProperty $TLS1ClientPath).Enabled -eq 1){Write-Host "Added $TLS1ClientPath\Enabled" -ForegroundColor Cyan}Else{Write-Host "Couldn't add $TLS1ClientPath\Enabled" -ForegroundColor Yellow}
+New-ItemProperty -Path $TLS1ClientPath -Name "DisabledByDefault" -Value "0" -PropertyType DWORD -Force
+if ((Get-ItemProperty $TLS1ClientPath).DisabledByDefault -eq 0){Write-Host "Added $TLS1ClientPath\DisabledByDefault" -ForegroundColor Cyan}Else{Write-Host "Couldn't add $TLS1ClientPath\DisabledByDefault" -ForegroundColor Yellow}
+New-Item -Path $TLS1ServerPath -Force |New-ItemProperty -Name "Enabled" -Value "1" -PropertyType DWORD -Force
+if ((Get-ItemProperty $TLS1ServerPath).Enabled -eq 1){Write-Host "Added $TLS1ServerPath\Enabled" -ForegroundColor Cyan}Else{Write-Host "Couldn't add $TLS1ServerPath\Enabled" -ForegroundColor Yellow}
+New-ItemProperty -Path $TLS1ServerPath -Name "DisabledByDefault" -Value "0" -PropertyType DWORD -Force
+if ((Get-ItemProperty $TLS1ServerPath).DisabledByDefault -eq 0){Write-Host "Added $TLS1ServerPath\DisabledByDefault" -ForegroundColor Cyan}Else{Write-Host "Couldn't add $TLS1ServerPath\DisabledByDefault" -ForegroundColor Yellow}
+
+Write-Host "Done!" -ForegroundColor Green
+}
 
 Function EnableTLS1()
 {
@@ -264,9 +288,10 @@ do
               Connect-LDAPS
              }
 
-		'2' {
+         '2' {
               EnableTLS1
-             } 
+             }
+
      }
      pause
  }
@@ -502,6 +527,7 @@ Function OSVersion
 	}
 }
 
+
 # @FUNCTION@ ======================================================================================================================
 # Name...........: NetworkAdapter
 # Description....: Check if all network adapters are Up
@@ -541,6 +567,7 @@ Function NetworkAdapter
 		result = $result;
 	}
 }
+
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: IPv6
@@ -1867,6 +1894,7 @@ Function Test-VersionUpdate()
 		Write-LogMessage -Type Info -Msg "Current version is the latest!"
 	}
 }
+
 #endregion
 
 #region Writer Functions
@@ -1987,6 +2015,7 @@ Function Write-LogMessage
 	}
 }
 
+
 # @FUNCTION@ ======================================================================================================================
 # Name...........: Collect-ExceptionMessage
 # Description....: Formats exception messages
@@ -2048,6 +2077,7 @@ Function Get-LogHeader
 ###########################################################################################
 # Main start
 ###########################################################################################
+
 
 
 #troubleshooting section
