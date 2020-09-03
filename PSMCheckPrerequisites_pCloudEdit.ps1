@@ -1877,7 +1877,7 @@ Function Test-VersionUpdate()
 		If (Test-Path -Path "$PSCommandPath.NEW")
 		{
 			Rename-Item -path $PSCommandPath -NewName "$PSCommandPath.OLD"
-			Rename-Item -Path "$PSCommandPath.NEW" -NewName $g_ScriptName
+			Rename-Item -Path "$PSCommandPath.NEW" -NewName PSMCheckPrerequisites_PrivilegeCloud.ps1
 			Remove-Item -Path "$PSCommandPath.OLD"
 			Write-LogMessage -Type Info -Msg "Finished Updating, please close window (Regular or ISE) and relaunch script"
 			Pause
