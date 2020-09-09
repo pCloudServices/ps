@@ -62,14 +62,14 @@ param
 		}
 		Else { $true }
 	})]
-	[String]${Please enter your provided portal URL Address, Example; https;//<customerDomain>.privilegecloud.cyberark.com (Or leave empty)}
+	[String]${Please enter your provided portal URL Address, Example: https://<customerDomain>.privilegecloud.cyberark.com (Or leave empty)}
     
  )
 
 # ------ Copy parameter values entered ------
 $VaultIP = ${Please enter your Vault IP Address (Or leave empty)}
 $TunnelIP = ${Please enter your Tunnel Connector IP Address (Or leave empty)}
-$PortalURL = ${Please enter your provided portal URL Address, Example; https;//<customerDomain>.privilegecloud.cyberark.com (Or leave empty)}
+$PortalURL = ${Please enter your provided portal URL Address, Example: https://<customerDomain>.privilegecloud.cyberark.com (Or leave empty)}
 
 # ------ SET Script Prerequisites ------
 ##############################################################
@@ -1869,8 +1869,11 @@ Function Test-VersionUpdate()
 			Rename-Item -path $PSCommandPath -NewName "$PSCommandPath.OLD"
 			Rename-Item -Path "$PSCommandPath.NEW" -NewName "PSMCheckPrerequisites_PrivilegeCloud.ps1"
 			Remove-Item -Path "$PSCommandPath.OLD"
-			Write-LogMessage -Type Info -Msg "Finished Updating, please close window (Regular or ISE) and relaunch script"
+			$scriptPathAndArgs = "& `"PSMCheckPrerequisites_PrivilegeCloud.ps1`" -POC:$POC -OutOfDomain:$OutOfDomain -Troubleshooting:$Troubleshooting -VaultIP $VaultIP -TunnelIP $TunnelIP -PortalURL $PortalURL"
+			Write-LogMessage -Type Info -Msg "Finished Updating, relaunching the script"
 			Pause
+			Invoke-Expression $scriptPathAndArgs
+			
 			return
 		}
 		Else
