@@ -10,7 +10,7 @@
 #
 #
 ###########################################################################
-[CmdletBinding(DefaultParameterSetName="Regualr")]
+[CmdletBinding(DefaultParameterSetName="Regular")]
  <#
   .DESCRIPTION
   Script checks prerequisites for Privilege Cloud Connector machine
@@ -25,9 +25,6 @@
 
   .EXAMPLE - Troubleshoot certain components
   PS C:\> .\PSMCheckPrerequisites.ps1 -Troubleshooting
-
-  .EXAMPLE3 - Run with POC mode
-  PS C:\> .\PSMCheckPrerequisites.ps1 -POC
   
   .EXAMPLE - Run in POC mode
   PS C:\> .\PSMCheckPrerequisites.ps1 -POC
@@ -37,41 +34,42 @@
 param
 (
 	# Use this switch to Exclude the Domain user check
-	[Parameter(ParameterSetName='Regualr',Mandatory=$false)]
+	[Parameter(ParameterSetName='Regular',Mandatory=$false)]
 	[switch]$OutOfDomain,
 	# Use this switch to run an additional tests for POC
-	[Parameter(ParameterSetName='Regualr',Mandatory=$false)]
+	[Parameter(ParameterSetName='Regular',Mandatory=$false)]
 	[switch]$POC,
 	# Use this switch to troubleshoot specific items
 	[Parameter(ParameterSetName='Troubleshoot',Mandatory=$false)]
 	[switch]$Troubleshooting,
 	# Get the Vault IP
-	[Parameter(ParameterSetName='Regualr',Mandatory=$true)]
+	[Parameter(ParameterSetName='Regular',Mandatory=$true)]
 	[AllowEmptyString()]
 	[Alias("VaultIP")]
 	[String]${Please enter your Vault IP Address (Or leave empty)},
 	# Get the Tunnel IP
-	[Parameter(ParameterSetName='Regualr',Mandatory=$true)]
+	[Parameter(ParameterSetName='Regular',Mandatory=$true)]
 	[AllowEmptyString()]
 	[Alias("TunnelIP")]
 	[String]${Please enter your Tunnel Connector IP Address (Or leave empty)},
 	# Get the Portal URL
-	[Parameter(ParameterSetName='Regualr',Mandatory=$true)]
+	[Parameter(ParameterSetName='Regular',Mandatory=$true)]
+	[AllowEmptyString()]
+	[Alias("PortalURL")]
 	[ValidateScript({
 		If(![string]::IsNullOrEmpty($_)) {
-			$_ -like "https://*.privilegecloud.cyberark.com"
+			$_ -like "*.privilegecloud.cyberark.com"
 		}
 		Else { $true }
 	})]
-	[AllowEmptyString()]
-	[Alias("PortalURL")]
-	[String]${Please enter your provided portal URL Address, Example: https://<customerDomain>.privilegecloud.cyberark.com (Or leave empty)}
+	[String]${Please enter your provided portal URL Address, Example; https;//<customerDomain>.privilegecloud.cyberark.com (Or leave empty)}
+    
  )
 
 # ------ Copy parameter values entered ------
 $VaultIP = ${Please enter your Vault IP Address (Or leave empty)}
 $TunnelIP = ${Please enter your Tunnel Connector IP Address (Or leave empty)}
-$PortalURL = ${Please enter your provided portal URL Address, Example: https://<customerDomain>.privilegecloud.cyberark.com (Or leave empty)}
+$PortalURL = ${Please enter your provided portal URL Address, Example; https;//<customerDomain>.privilegecloud.cyberark.com (Or leave empty)}
 
 # ------ SET Script Prerequisites ------
 ##############################################################
@@ -108,12 +106,8 @@ $arrCheckPrerequisites = @(
 "GPO"
 )
 
-#Combine Checks from POC with regular checks
-If ($POC){
-$arrCheckPrerequisites = $arrCheckPrerequisites + $arrCheckPrerequisitesPOC
-}
 
-## Combine Checks from POC with regular checks
+## Combine Checks from OutofDomain with regular checks
 If (-not $OutOfDomain){
 	$arrCheckPrerequisites += $arrCheckPrerequisitesOutOfDomain
 }
@@ -143,7 +137,7 @@ $global:InDebug = $PSBoundParameters.Debug.IsPresent
 $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 
 # Script Version
-[int]$versionNumber = "12"
+[int]$versionNumber = "15"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -224,23 +218,6 @@ Throw "Problem looking up model account - $($_.Exception.Message)"
 $ModelRequest
 }
 Function EnableTLS1(){
-$TLS1ClientPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Client"
-$TLS1ServerPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server"
-
-New-Item -Path $TLS1ClientPath -Force |New-ItemProperty -Name "Enabled" -Value "1" -PropertyType DWORD -Force
-if ((Get-ItemProperty $TLS1ClientPath).Enabled -eq 1){Write-Host "Added $TLS1ClientPath\Enabled" -ForegroundColor Cyan}Else{Write-Host "Couldn't add $TLS1ClientPath\Enabled" -ForegroundColor Yellow}
-New-ItemProperty -Path $TLS1ClientPath -Name "DisabledByDefault" -Value "0" -PropertyType DWORD -Force
-if ((Get-ItemProperty $TLS1ClientPath).DisabledByDefault -eq 0){Write-Host "Added $TLS1ClientPath\DisabledByDefault" -ForegroundColor Cyan}Else{Write-Host "Couldn't add $TLS1ClientPath\DisabledByDefault" -ForegroundColor Yellow}
-New-Item -Path $TLS1ServerPath -Force |New-ItemProperty -Name "Enabled" -Value "1" -PropertyType DWORD -Force
-if ((Get-ItemProperty $TLS1ServerPath).Enabled -eq 1){Write-Host "Added $TLS1ServerPath\Enabled" -ForegroundColor Cyan}Else{Write-Host "Couldn't add $TLS1ServerPath\Enabled" -ForegroundColor Yellow}
-New-ItemProperty -Path $TLS1ServerPath -Name "DisabledByDefault" -Value "0" -PropertyType DWORD -Force
-if ((Get-ItemProperty $TLS1ServerPath).DisabledByDefault -eq 0){Write-Host "Added $TLS1ServerPath\DisabledByDefault" -ForegroundColor Cyan}Else{Write-Host "Couldn't add $TLS1ServerPath\DisabledByDefault" -ForegroundColor Yellow}
-
-Write-Host "Done!" -ForegroundColor Green
-}
-
-Function EnableTLS1()
-{
 	$TLS1ClientPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Client"
 	$TLS1ServerPath = "HKLM:\SYSTEM\CurrentControlSet\Control\SecurityProviders\SCHANNEL\Protocols\TLS 1.0\Server"
 	ForEach ($tlsPath in @($TLS1ClientPath, $TLS1ServerPath))
@@ -265,45 +242,11 @@ Function EnableTLS1()
 		}
 	}
 	
-	Write-LogMessage -Type Success -Msg "Done!"
+	Write-LogMessage -Type Success -Msg "Enabled TLS1.0!"
 }
-
-Function Show-Menu
-{
-    Clear-Host
-    Write-Host "================ Troubleshooting Guide ================"
-    
-    Write-Host "1: Press '1' to Test LDAPS Bind Account" -ForegroundColor Green
-    Write-Host "2: Press '2' to Enable TLS 1.0 (Only for POC)" -ForegroundColor Green
-    Write-Host "Q: Press 'Q' to quit."
-}
-
-do
- {
-     Show-Menu
-     $selection = Read-Host "Please select an option"
-     switch ($selection)
-     {
-         '1' {
-              Connect-LDAPS
-             }
-
-         '2' {
-              EnableTLS1
-             }
-
-     }
-     pause
- }
- until ($selection -eq 'q')
- exit
-}
-#endregion
-
-Function GetListofDCsAndTestBindAccount()
-{
+Function GetListofDCsAndTestBindAccount(){
 $UserPrincipal = Get-UserPrincipal
-if(($UserPrincipal.ContextType -eq "Domain") -and (!(Test-Path "$PSScriptRoot\DCInfo.txt"))){
+if($UserPrincipal.ContextType -eq "Domain"){
 
 function listControllers
 {
@@ -390,11 +333,61 @@ Function Test-LDAP {
         }
     }
 }
-Write-Host -ForegroundColor Cyan "Below DC Info will be printed once and stored in local file `"DCInfo.txt`"."
-Write-Host -ForegroundColor Cyan "Delete the file if you want to perform this check again."
+Write-Host -ForegroundColor Cyan "Outputting DC Info on screen, this will also be stored in local file `"DCInfo.txt`"."
+Write-Host -ForegroundColor Cyan "This might take awhile depending on your network configuration."
 Test-LDAP |format-table| Tee-Object -file "$PSScriptRoot\DCInfo.txt"
+}Else{Write-Host "Must be logged in as domain member."}
 }
+Function DisableIPV6(){
+    #Disable IPv6 on NIC
+	Disable-NetAdapterBinding -Name "*" -ComponentID ms_tcpip6
+
+	#Disable IPv6 on Registry
+	New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters" -Name "DisabledComponents" -Value "0" -PropertyType DWORD -Force
+
+    Write-LogMessage -Type Success -Msg "Disabled IPv6, Restart machine to take affect."
 }
+
+Function Show-Menu
+{
+    Clear-Host
+    Write-Host "================ Troubleshooting Guide ================"
+    
+    Write-Host "1: Press '1' to Test LDAPS Bind Account" -ForegroundColor Green
+    Write-Host "2: Press '2' to Enable TLS 1.0 (Only for POC)" -ForegroundColor Green
+    Write-Host "3: Press '3' to Retrieve DC Info" -ForegroundColor Green
+    Write-Host "4: Press '4' to Disable IPv6" -ForegroundColor Green
+    Write-Host "Q: Press 'Q' to quit."
+}
+
+do
+ {
+     Show-Menu
+     $selection = Read-Host "Please select an option"
+     switch ($selection)
+     {
+         '1' {
+              Connect-LDAPS
+             }
+
+         '2' {
+              EnableTLS1
+             }
+         '3' {
+              GetListofDCsAndTestBindAccount
+             }
+         '4' {
+              DisableIPV6
+             }
+     }
+     pause
+ }
+ until ($selection -eq 'q')
+ exit
+}
+#endregion
+
+
 
 #region Prerequisites methods
 # @FUNCTION@ ======================================================================================================================
@@ -584,18 +577,7 @@ Function IPV6
 		$actual = ""
 		$result = $false
 		$errorMsg = ""
-<#
-Why are we disabling it now?
-Should we log that we are disabling this?
-This will aply only after restart I think
-
-		#Disable IPv6 on NIC
-		Disable-NetAdapterBinding -Name "*" -ComponentID ms_tcpip6
-
-		#Disable IPv6 on Registry
-		New-ItemProperty -Path "HKLM:\SYSTEM\CurrentControlSet\Services\Tcpip6\Parameters" -Name "DisabledComponents" -Value "0" -PropertyType DWORD -Force
-#>
-		
+	
 		$arrInterfaces = (Get-WmiObject -class Win32_NetworkAdapterConfiguration -filter "ipenabled = TRUE").IPAddress
 		$IPv6Status = ($arrInterfaces | where { $_.contains("::") }).Count -gt 0
 
@@ -603,6 +585,7 @@ This will aply only after restart I think
 		{
 			$actual = "Enabled"
 			$result = $false
+            $errorMsg = "Disable IPv6, You can rerun the script with -Troubleshooting flag to do it."
 		}
 		else 
 		{
@@ -1142,7 +1125,7 @@ Function VaultConnectivity
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: TunnelConnectivity
-# Description....: Tests Tunnel network connectivity on port 5511
+# Description....: Tests Tunnel network connectivity on port 443
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
@@ -1186,7 +1169,6 @@ Function ConsoleHTTPConnectivity
 		
 		$CustomerGenericGET = 0
 		Try{
-			#TODO: is it OK that we have here a constant customer ID? should we get he current customer ID?
 			$connectorConfigURL = "https://$g_ConsoleIP/connectorConfig/v1?customerId=35741f0e-71fe-4c1a-97c8-28594bf1281d&configItem=environmentFQDN"
 			$CustomerGenericGET = Invoke-RestMethod -Uri $connectorConfigURL -TimeoutSec 20 -ContentType 'application/json'
 			If($null -ne $CustomerGenericGET)
@@ -1286,6 +1268,13 @@ Function CustomerPortalConnectivity
 	[OutputType([PsCustomObject])]
 	param ()
 	Write-LogMessage -Type Verbose -Msg "Running CustomerPortalConnectivity"
+    $ConnectionDetailsFile = "$PSScriptRoot\*ConnectionDetails.txt"
+
+    #In case customer placed ConnectionDetails.txt file in the same folder we can grab the PVWA URL from it.
+    if (Test-Path $ConnectionDetailsFile){
+    $PortalURL = ([System.Uri](Get-Content $ConnectionDetailsFile | Select-String -AllMatches "privilegecloud.cyberark.com").ToString().Trim("URL:")).Host
+    }
+
 	if ($PortalURL -match "https://")
 	{
 		$PortalURL = ([System.Uri]$PortalURL).Host
@@ -1878,7 +1867,7 @@ Function Test-VersionUpdate()
 		If (Test-Path -Path "$PSCommandPath.NEW")
 		{
 			Rename-Item -path $PSCommandPath -NewName "$PSCommandPath.OLD"
-			Rename-Item -Path "$PSCommandPath.NEW" -NewName $g_ScriptName
+			Rename-Item -Path "$PSCommandPath.NEW" -NewName "PSMCheckPrerequisites_PrivilegeCloud.ps1"
 			Remove-Item -Path "$PSCommandPath.OLD"
 			Write-LogMessage -Type Info -Msg "Finished Updating, please close window (Regular or ISE) and relaunch script"
 			Pause
@@ -2102,7 +2091,7 @@ else
 		Write-LogMessage -Type Error -Msg "Failed to check for latest version - Skipping. Error: $(Collect-ExceptionMessage $_.Exception)"
 	}
 	try {
-		Write-LogMessage -Type Verbose -Msg $(GetPublicIP)# Retrieve public IP and save it locally #TODO: For what do we need the public IP?
+		Write-LogMessage -Type Verbose -Msg $(GetPublicIP)# Retrieve public IP and save it locally
 	} catch {
 		Write-LogMessage -Type Error -Msg "Failed to retrieve public IP - Skipping. Error: $(Collect-ExceptionMessage $_.Exception)"
 	}
@@ -2111,14 +2100,179 @@ else
 	} catch	{
 		Write-LogMessage -Type Error -Msg "Checking prerequisites failed. Error(s): $(Collect-ExceptionMessage $_.Exception)"
 	}
-	try {
-		GetListofDCsAndTestBindAccount					# Retrieve list of available DCs from the current machine joined domain.
-	} catch {
-		Write-LogMessage -Type Error -Msg "Failed to get a list of DC - Skipping. Error: $(Collect-ExceptionMessage $_.Exception)"
-	}
 }
 Write-LogMessage -Type Info -Msg "Script Ended" -Footer	
 ###########################################################################################
 # Main end
 ###########################################################################################	
 #endregion
+# SIG # Begin signature block
+# MIIfdQYJKoZIhvcNAQcCoIIfZjCCH2ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCA1aBmAjLQB6ZyE
+# 8Jqb/BjJTHi401PpuQqLeUDc6sw3iKCCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
+# NStkZdZqMA0GCSqGSIb3DQEBCwUAMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBH
+# bG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9i
+# YWxTaWduIFJvb3QgQ0EwHhcNMTgwOTE5MDAwMDAwWhcNMjgwMTI4MTIwMDAwWjBM
+# MSAwHgYDVQQLExdHbG9iYWxTaWduIFJvb3QgQ0EgLSBSMzETMBEGA1UEChMKR2xv
+# YmFsU2lnbjETMBEGA1UEAxMKR2xvYmFsU2lnbjCCASIwDQYJKoZIhvcNAQEBBQAD
+# ggEPADCCAQoCggEBAMwldpB5BngiFvXAg7aEyiie/QV2EcWtiHL8RgJDx7KKnQRf
+# JMsuS+FggkbhUqsMgUdwbN1k0ev1LKMPgj0MK66X17YUhhB5uzsTgHeMCOFJ0mpi
+# Lx9e+pZo34knlTifBtc+ycsmWQ1z3rDI6SYOgxXG71uL0gRgykmmKPZpO/bLyCiR
+# 5Z2KYVc3rHQU3HTgOu5yLy6c+9C7v/U9AOEGM+iCK65TpjoWc4zdQQ4gOsC0p6Hp
+# sk+QLjJg6VfLuQSSaGjlOCZgdbKfd/+RFO+uIEn8rUAVSNECMWEZXriX7613t2Sa
+# er9fwRPvm2L7DWzgVGkWqQPabumDk3F2xmmFghcCAwEAAaOCASIwggEeMA4GA1Ud
+# DwEB/wQEAwIBBjAPBgNVHRMBAf8EBTADAQH/MB0GA1UdDgQWBBSP8Et/qC5FJK5N
+# UPpjmove4t0bvDAfBgNVHSMEGDAWgBRge2YaRQ2XyolQL30EzTSo//z9SzA9Bggr
+# BgEFBQcBAQQxMC8wLQYIKwYBBQUHMAGGIWh0dHA6Ly9vY3NwLmdsb2JhbHNpZ24u
+# Y29tL3Jvb3RyMTAzBgNVHR8ELDAqMCigJqAkhiJodHRwOi8vY3JsLmdsb2JhbHNp
+# Z24uY29tL3Jvb3QuY3JsMEcGA1UdIARAMD4wPAYEVR0gADA0MDIGCCsGAQUFBwIB
+# FiZodHRwczovL3d3dy5nbG9iYWxzaWduLmNvbS9yZXBvc2l0b3J5LzANBgkqhkiG
+# 9w0BAQsFAAOCAQEAI3Dpz+K+9VmulEJvxEMzqs0/OrlkF/JiBktI8UCIBheh/qvR
+# XzzGM/Lzjt0fHT7MGmCZggusx/x+mocqpX0PplfurDtqhdbevUBj+K2myIiwEvz2
+# Qd8PCZceOOpTn74F9D7q059QEna+CYvCC0h9Hi5R9o1T06sfQBuKju19+095VnBf
+# DNOOG7OncA03K5eVq9rgEmscQM7Fx37twmJY7HftcyLCivWGQ4it6hNu/dj+Qi+5
+# fV6tGO+UkMo9J6smlJl1x8vTe/fKTNOvUSGSW4R9K58VP3TLUeiegw4WbxvnRs4j
+# vfnkoovSOWuqeRyRLOJhJC2OKkhwkMQexejgcDCCBKcwggOPoAMCAQICDkgbagep
+# Qkweqv7zzfEPMA0GCSqGSIb3DQEBCwUAMEwxIDAeBgNVBAsTF0dsb2JhbFNpZ24g
+# Um9vdCBDQSAtIFIzMRMwEQYDVQQKEwpHbG9iYWxTaWduMRMwEQYDVQQDEwpHbG9i
+# YWxTaWduMB4XDTE2MDYxNTAwMDAwMFoXDTI0MDYxNTAwMDAwMFowbjELMAkGA1UE
+# BhMCQkUxGTAXBgNVBAoTEEdsb2JhbFNpZ24gbnYtc2ExRDBCBgNVBAMTO0dsb2Jh
+# bFNpZ24gRXh0ZW5kZWQgVmFsaWRhdGlvbiBDb2RlU2lnbmluZyBDQSAtIFNIQTI1
+# NiAtIEczMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA2be6Ja2U81u+
+# QQYcU8oMEIxRQVkzeWT0V53k1SXE7FCEWJhyeUDiL3jUkuomDp6ulXz7xP1xRN2M
+# X7cji1679PxLyyM9w3YD9dGMRbxxdR2L0omJvuNRPcbIirIxNQduufW6ag30EJ+u
+# 1WJJKHvsV7qrMnyxfdKiVgY27rDv0Gqu6qsf1g2ffJb7rXCZLV2V8IDQeUbsVTrM
+# 0zj7BAeoB3WCguDQfne4j+vSKPyubRRoQX92Q9dIumBE4bdy6NDwIAN72tq0BnXH
+# sgPe+JTGaI9ee56bnTbgztJrxsZr6RQitXF+to9aH9vnbvRCEJBo5itFEE9zuizX
+# xTFqct1jcwIDAQABo4IBYzCCAV8wDgYDVR0PAQH/BAQDAgEGMB0GA1UdJQQWMBQG
+# CCsGAQUFBwMDBggrBgEFBQcDCTASBgNVHRMBAf8ECDAGAQH/AgEAMB0GA1UdDgQW
+# BBTcLFgsKm81LZ95lahIXcRtPlO/uTAfBgNVHSMEGDAWgBSP8Et/qC5FJK5NUPpj
+# move4t0bvDA+BggrBgEFBQcBAQQyMDAwLgYIKwYBBQUHMAGGImh0dHA6Ly9vY3Nw
+# Mi5nbG9iYWxzaWduLmNvbS9yb290cjMwNgYDVR0fBC8wLTAroCmgJ4YlaHR0cDov
+# L2NybC5nbG9iYWxzaWduLmNvbS9yb290LXIzLmNybDBiBgNVHSAEWzBZMAsGCSsG
+# AQQBoDIBAjAHBgVngQwBAzBBBgkrBgEEAaAyAV8wNDAyBggrBgEFBQcCARYmaHR0
+# cHM6Ly93d3cuZ2xvYmFsc2lnbi5jb20vcmVwb3NpdG9yeS8wDQYJKoZIhvcNAQEL
+# BQADggEBAHYJxMwv2e8eS6n4V/NAOSHKTDwdnikrINQrRNKIzhoNBc+Dgbvrabwx
+# jSrEx0TMYGCUHM+h4QIkDq1bvizCJx5nt+goHzJR4znzmN+4ny6LKrR7CgO8vTYE
+# j8nQnE+jAieZsPBF6TTf5DqjtwY32G8qeZDU1E5YcexTqWGY9zlp4BKcV1hyhicp
+# pR3lMvMrmZdavyuwPLQG6g5k7LfNZYAkF8LZN/WxJhA1R3uaArpUokWT/3m/GozF
+# n7Wf33jna1DxR5RpSyS42gXoDJ1PBuxKMSB+T12GhC81o82cwYRXHx+twOKkse8p
+# ayGXptT+7QM3sPz1jSq83ISD497D518wggV0MIIEXKADAgECAgwhXYQh+9kPSKH6
+# QS4wDQYJKoZIhvcNAQELBQAwbjELMAkGA1UEBhMCQkUxGTAXBgNVBAoTEEdsb2Jh
+# bFNpZ24gbnYtc2ExRDBCBgNVBAMTO0dsb2JhbFNpZ24gRXh0ZW5kZWQgVmFsaWRh
+# dGlvbiBDb2RlU2lnbmluZyBDQSAtIFNIQTI1NiAtIEczMB4XDTE5MDQwMjE0MDI0
+# NVoXDTIyMDQwMjE0MDI0NVowgcgxHTAbBgNVBA8MFFByaXZhdGUgT3JnYW5pemF0
+# aW9uMRIwEAYDVQQFEwk1MTIyOTE2NDIxEzARBgsrBgEEAYI3PAIBAxMCSUwxCzAJ
+# BgNVBAYTAklMMRkwFwYDVQQIExBDZW50cmFsIERpc3RyaWN0MRQwEgYDVQQHEwtQ
+# ZXRhaCBUaWt2YTEfMB0GA1UEChMWQ3liZXJBcmsgU29mdHdhcmUgTHRkLjEfMB0G
+# A1UEAxMWQ3liZXJBcmsgU29mdHdhcmUgTHRkLjCCASIwDQYJKoZIhvcNAQEBBQAD
+# ggEPADCCAQoCggEBAJmp1fuFtNzvXmXAG4MZy5nl5gLRMycA6ieFpbOIPdMOTMvO
+# wWaW4VASvtzqyZOpUNV0OZka6ajkVrM7IzihX43zvfEizWmG+359QU6htgHSWmII
+# KDjEOxQrnq/+l0qgbBge6zqA4mzXh+frgpgnfvL9Rq7WTCjNywTl7UD3mn5VuKbZ
+# XIhn19ICv7WKSr/VVoGNpIy/o3PmgHLfSMX9vUaxU+sXIZKhP1eqFtMMllO0jzK2
+# hAttOAGLlKJO2Yp17+HOI86vfVAJ8YGOeFdtObgdrL/DhSORMFZE5Y5eT14vLZQu
+# OODTz/YZE/PnrwxGKFqPQNHo9O7/j4kNxGTa1m8CAwEAAaOCAbUwggGxMA4GA1Ud
+# DwEB/wQEAwIHgDCBoAYIKwYBBQUHAQEEgZMwgZAwTgYIKwYBBQUHMAKGQmh0dHA6
+# Ly9zZWN1cmUuZ2xvYmFsc2lnbi5jb20vY2FjZXJ0L2dzZXh0ZW5kY29kZXNpZ25z
+# aGEyZzNvY3NwLmNydDA+BggrBgEFBQcwAYYyaHR0cDovL29jc3AyLmdsb2JhbHNp
+# Z24uY29tL2dzZXh0ZW5kY29kZXNpZ25zaGEyZzMwVQYDVR0gBE4wTDBBBgkrBgEE
+# AaAyAQIwNDAyBggrBgEFBQcCARYmaHR0cHM6Ly93d3cuZ2xvYmFsc2lnbi5jb20v
+# cmVwb3NpdG9yeS8wBwYFZ4EMAQMwCQYDVR0TBAIwADBFBgNVHR8EPjA8MDqgOKA2
+# hjRodHRwOi8vY3JsLmdsb2JhbHNpZ24uY29tL2dzZXh0ZW5kY29kZXNpZ25zaGEy
+# ZzMuY3JsMBMGA1UdJQQMMAoGCCsGAQUFBwMDMB0GA1UdDgQWBBQQP3rH7GUJCWmd
+# tvKh9RqkZNQaEjAfBgNVHSMEGDAWgBTcLFgsKm81LZ95lahIXcRtPlO/uTANBgkq
+# hkiG9w0BAQsFAAOCAQEAtRWdBsZ830FMJ9GxODIHyFS0z08inqP9c3iNxDk3BYNL
+# WxtU91cGtFdnCAc8G7dNMEQ+q0TtQKTcJ+17k6GdNM8Lkanr51MngNOl8CP6QMr+
+# rIzKAipex1J61Mf44/6Y6gOMGHW7jk84QxMSEbYIglfkHu+RhH8mhYRGKGgHOX3R
+# ViIoIxthvlG08/nTux3zeVnSAmXB5Z8KJ+FTzLyZhFii2i2TLAt/a95dMOb4YquH
+# qK9lmeFCLovYNIAihC7NHBruSGkt/sguM/17JWPpgHpjJxrIZH3dVH41LNPb3Bz2
+# KDHmv37ZRpQvuxAyctrTAPA6HJtuEJnIo6DhFR9LfTGCEFYwghBSAgEBMH4wbjEL
+# MAkGA1UEBhMCQkUxGTAXBgNVBAoTEEdsb2JhbFNpZ24gbnYtc2ExRDBCBgNVBAMT
+# O0dsb2JhbFNpZ24gRXh0ZW5kZWQgVmFsaWRhdGlvbiBDb2RlU2lnbmluZyBDQSAt
+# IFNIQTI1NiAtIEczAgwhXYQh+9kPSKH6QS4wDQYJYIZIAWUDBAIBBQCgfDAQBgor
+# BgEEAYI3AgEMMQIwADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEE
+# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgprAtM7ybVfFr
+# nsPmk+4jPawk8lPvyJ7oRmGv4r39qjowDQYJKoZIhvcNAQEBBQAEggEAa8+epwwI
+# BlntJAHgbf44L+BUCE7WdnboASlP+Fn9j77gXMnkhH2/EV0SStX93ymjjSrJmNWd
+# SqcTkgPUPJuhUhn/5/v/UzrDAVBLzZH6D2Q+uh/wSAJc+Zg1zLQyLny2+Iw8Dyoh
+# yk85V1iGYy2PatlhG7Zj2QHL9PsHDJ+Ax5djd/Tb+PLqglqMJ6XWwkPAeUZMbxJB
+# cR1pvSjeIqW44aqsVyBmbacPZdt3fYFVlC/qX/5fWxlAPUmcezAyso/xu+HrViO6
+# 27P4hGTkKEWv0R5gawAk/4nVwARsAvCcLXbgo5Tez362a93GHbGX4mEaKg8yWvwt
+# jrhG3m9Uo5GTg6GCDiswgg4nBgorBgEEAYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEH
+# AqCCDgQwgg4AAgEDMQ0wCwYJYIZIAWUDBAIBMIH+BgsqhkiG9w0BCRABBKCB7gSB
+# 6zCB6AIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBRWsiNyJvQt9CHya0hB
+# gxrr2A81cgIUKcFNeF2dGSOBYWMxNteMZMrG6kMYDzIwMjAwOTA5MTAxODM5WjAD
+# AgEeoIGGpIGDMIGAMQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29y
+# cG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNV
+# BAMTKFN5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzOgggqL
+# MIIFODCCBCCgAwIBAgIQewWx1EloUUT3yYnSnBmdEjANBgkqhkiG9w0BAQsFADCB
+# vTELMAkGA1UEBhMCVVMxFzAVBgNVBAoTDlZlcmlTaWduLCBJbmMuMR8wHQYDVQQL
+# ExZWZXJpU2lnbiBUcnVzdCBOZXR3b3JrMTowOAYDVQQLEzEoYykgMjAwOCBWZXJp
+# U2lnbiwgSW5jLiAtIEZvciBhdXRob3JpemVkIHVzZSBvbmx5MTgwNgYDVQQDEy9W
+# ZXJpU2lnbiBVbml2ZXJzYWwgUm9vdCBDZXJ0aWZpY2F0aW9uIEF1dGhvcml0eTAe
+# Fw0xNjAxMTIwMDAwMDBaFw0zMTAxMTEyMzU5NTlaMHcxCzAJBgNVBAYTAlVTMR0w
+# GwYDVQQKExRTeW1hbnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UECxMWU3ltYW50ZWMg
+# VHJ1c3QgTmV0d29yazEoMCYGA1UEAxMfU3ltYW50ZWMgU0hBMjU2IFRpbWVTdGFt
+# cGluZyBDQTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALtZnVlVT52M
+# cl0agaLrVfOwAa08cawyjwVrhponADKXak3JZBRLKbvC2Sm5Luxjs+HPPwtWkPhi
+# G37rpgfi3n9ebUA41JEG50F8eRzLy60bv9iVkfPw7mz4rZY5Ln/BJ7h4OcWEpe3t
+# r4eOzo3HberSmLU6Hx45ncP0mqj0hOHE0XxxxgYptD/kgw0mw3sIPk35CrczSf/K
+# O9T1sptL4YiZGvXA6TMU1t/HgNuR7v68kldyd/TNqMz+CfWTN76ViGrF3PSxS9TO
+# 6AmRX7WEeTWKeKwZMo8jwTJBG1kOqT6xzPnWK++32OTVHW0ROpL2k8mc40juu1MO
+# 1DaXhnjFoTcCAwEAAaOCAXcwggFzMA4GA1UdDwEB/wQEAwIBBjASBgNVHRMBAf8E
+# CDAGAQH/AgEAMGYGA1UdIARfMF0wWwYLYIZIAYb4RQEHFwMwTDAjBggrBgEFBQcC
+# ARYXaHR0cHM6Ly9kLnN5bWNiLmNvbS9jcHMwJQYIKwYBBQUHAgIwGRoXaHR0cHM6
+# Ly9kLnN5bWNiLmNvbS9ycGEwLgYIKwYBBQUHAQEEIjAgMB4GCCsGAQUFBzABhhJo
+# dHRwOi8vcy5zeW1jZC5jb20wNgYDVR0fBC8wLTAroCmgJ4YlaHR0cDovL3Muc3lt
+# Y2IuY29tL3VuaXZlcnNhbC1yb290LmNybDATBgNVHSUEDDAKBggrBgEFBQcDCDAo
+# BgNVHREEITAfpB0wGzEZMBcGA1UEAxMQVGltZVN0YW1wLTIwNDgtMzAdBgNVHQ4E
+# FgQUr2PWyqNOhXLgp7xB8ymiOH+AdWIwHwYDVR0jBBgwFoAUtnf6aUhHn1MS1cLq
+# BzJ2B9GXBxkwDQYJKoZIhvcNAQELBQADggEBAHXqsC3VNBlcMkX+DuHUT6Z4wW/X
+# 6t3cT/OhyIGI96ePFeZAKa3mXfSi2VZkhHEwKt0eYRdmIFYGmBmNXXHy+Je8Cf0c
+# kUfJ4uiNA/vMkC/WCmxOM+zWtJPITJBjSDlAIcTd1m6JmDy1mJfoqQa3CcmPU1dB
+# kC/hHk1O3MoQeGxCbvC2xfhhXFL1TvZrjfdKer7zzf0D19n2A6gP41P3CnXsxnUu
+# qmaFBJm3+AZX4cYO9uiv2uybGB+queM6AL/OipTLAduexzi7D1Kr0eOUA2AKTaD+
+# J20UMvw/l0Dhv5mJ2+Q5FL3a5NPD6itas5VYVQR9x5rsIwONhSrS/66pYYEwggVL
+# MIIEM6ADAgECAhB71OWvuswHP6EBIwQiQU0SMA0GCSqGSIb3DQEBCwUAMHcxCzAJ
+# BgNVBAYTAlVTMR0wGwYDVQQKExRTeW1hbnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UE
+# CxMWU3ltYW50ZWMgVHJ1c3QgTmV0d29yazEoMCYGA1UEAxMfU3ltYW50ZWMgU0hB
+# MjU2IFRpbWVTdGFtcGluZyBDQTAeFw0xNzEyMjMwMDAwMDBaFw0yOTAzMjIyMzU5
+# NTlaMIGAMQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRp
+# b24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5
+# bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzMwggEiMA0GCSqG
+# SIb3DQEBAQUAA4IBDwAwggEKAoIBAQCvDoqq+Ny/aXtUF3FHCb2NPIH4dBV3Z5Cc
+# /d5OAp5LdvblNj5l1SQgbTD53R2D6T8nSjNObRaK5I1AjSKqvqcLG9IHtjy1GiQo
+# +BtyUT3ICYgmCDr5+kMjdUdwDLNfW48IHXJIV2VNrwI8QPf03TI4kz/lLKbzWSPL
+# gN4TTfkQyaoKGGxVYVfR8QIsxLWr8mwj0p8NDxlsrYViaf1OhcGKUjGrW9jJdFLj
+# V2wiv1V/b8oGqz9KtyJ2ZezsNvKWlYEmLP27mKoBONOvJUCbCVPwKVeFWF7qhUhB
+# IYfl3rTTJrJ7QFNYeY5SMQZNlANFxM48A+y3API6IsW0b+XvsIqbAgMBAAGjggHH
+# MIIBwzAMBgNVHRMBAf8EAjAAMGYGA1UdIARfMF0wWwYLYIZIAYb4RQEHFwMwTDAj
+# BggrBgEFBQcCARYXaHR0cHM6Ly9kLnN5bWNiLmNvbS9jcHMwJQYIKwYBBQUHAgIw
+# GRoXaHR0cHM6Ly9kLnN5bWNiLmNvbS9ycGEwQAYDVR0fBDkwNzA1oDOgMYYvaHR0
+# cDovL3RzLWNybC53cy5zeW1hbnRlYy5jb20vc2hhMjU2LXRzcy1jYS5jcmwwFgYD
+# VR0lAQH/BAwwCgYIKwYBBQUHAwgwDgYDVR0PAQH/BAQDAgeAMHcGCCsGAQUFBwEB
+# BGswaTAqBggrBgEFBQcwAYYeaHR0cDovL3RzLW9jc3Aud3Muc3ltYW50ZWMuY29t
+# MDsGCCsGAQUFBzAChi9odHRwOi8vdHMtYWlhLndzLnN5bWFudGVjLmNvbS9zaGEy
+# NTYtdHNzLWNhLmNlcjAoBgNVHREEITAfpB0wGzEZMBcGA1UEAxMQVGltZVN0YW1w
+# LTIwNDgtNjAdBgNVHQ4EFgQUpRMBqZ+FzBtuFh5fOzGqeTYAex0wHwYDVR0jBBgw
+# FoAUr2PWyqNOhXLgp7xB8ymiOH+AdWIwDQYJKoZIhvcNAQELBQADggEBAEaer/C4
+# ol+imUjPqCdLIc2yuaZycGMv41UpezlGTud+ZQZYi7xXipINCNgQujYk+gp7+zvT
+# Yr9KlBXmgtuKVG3/KP5nz3E/5jMJ2aJZEPQeSv5lzN7Ua+NSKXUASiulzMub6KlN
+# 97QXWZJBw7c/hub2wH9EPEZcF1rjpDvVaSbVIX3hgGd+Yqy3Ti4VmuWcI69bEepx
+# qUH5DXk4qaENz7Sx2j6aescixXTN30cJhsT8kSWyG5bphQjo3ep0YG5gpVZ6DchE
+# WNzm+UgUnuW/3gC9d7GYFHIUJN/HESwfAD/DSxTGZxzMHgajkF9cVIs+4zNbgg/F
+# t4YCTnGf6WZFP3YxggJaMIICVgIBATCBizB3MQswCQYDVQQGEwJVUzEdMBsGA1UE
+# ChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0
+# IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcg
+# Q0ECEHvU5a+6zAc/oQEjBCJBTRIwCwYJYIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJ
+# AzENBgsqhkiG9w0BCRABBDAcBgkqhkiG9w0BCQUxDxcNMjAwOTA5MTAxODM5WjAv
+# BgkqhkiG9w0BCQQxIgQgsiYwZdlEsBiF2xPVWKwjeaXXgQXehmLAFtEVH3i1omkw
+# NwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQgxHTOdgB9AjlODaXk3nwUxoD54oIBPP72
+# U+9dtx/fYfgwCwYJKoZIhvcNAQEBBIIBAIRn4h8sx0O/hSOGTRdZP5h0yruTVF8P
+# upNWPQxTG74AGmmqop9hKAoI5Jb7E1L9+UjOIZSS25HiYAqEYZ/QtlU4flypdo/n
+# Qm5gbQfY2ZiaGdoj6ks3UKJO1RqA0DlWtpd9FJT+BRQqw98HzlL5mW/aV3TSyh7K
+# H7XnHBghTWs04JsI1TSMhxcFvAxhws5w4TbdXouG8EGbAgd6HS3kfzPY11PEwuk4
+# VTySQjP1mHVrDpeFfxdhAnimfZaj3mnVNPUlTlZ1/n+n1XpZZPKWwTLTVfPm1hLB
+# jSK+cDnJ2JbAPRDwII/UwOVlZGuWjBiQSkGm9oljGEHka7is7VsH+X8=
+# SIG # End signature block
