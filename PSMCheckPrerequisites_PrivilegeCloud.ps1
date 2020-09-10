@@ -1842,7 +1842,7 @@ Function Test-VersionUpdate()
 {
 	# Define the URLs to be used
 	$pCloudServicesURL = "https://raw.githubusercontent.com/pCloudServices/ps/master"
-	$pCloudLatest = "$pCloudServicesURL/Latest.txt"
+	$pCloudLatest = "$pCloudServicesURL/Latest1.txt"
 	$pCloudScript = "$pCloudServicesURL/$g_ScriptName"
 	
 	Write-LogMessage -Type Info -Msg "Current version is: $versionNumber"
@@ -1880,7 +1880,7 @@ Function Test-VersionUpdate()
 			Rename-Item -path $PSCommandPath -NewName "$PSCommandPath.OLD"
 			Rename-Item -Path "$PSCommandPath.NEW" -NewName $g_ScriptName
 			Remove-Item -Path "$PSCommandPath.OLD"
-            $scriptPathAndArgs = "& `"PSMCheckPrerequisites_PrivilegeCloud.ps1`" -POC:$POC -OutOfDomain:$OutOfDomain -Troubleshooting:$Troubleshooting"
+            $scriptPathAndArgs = "& `"$g_ScriptName`" -POC:$POC -OutOfDomain:$OutOfDomain -Troubleshooting:$Troubleshooting"
 			Write-LogMessage -Type Info -Msg "Finished Updating, relaunching the script"
 			Pause
 			Invoke-Expression $scriptPathAndArgs
