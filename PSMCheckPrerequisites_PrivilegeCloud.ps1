@@ -1884,7 +1884,8 @@ Function Test-VersionUpdate()
 			Write-LogMessage -Type Info -Msg "Finished Updating, relaunching the script"
 			Pause
 			#Invoke-Expression $scriptPathAndArgs
-			& `"$g_ScriptName`" -POC:$POC -OutOfDomain:$OutOfDomain -Troubleshooting:$Troubleshooting
+			& more
+			Start-Process `"$g_ScriptName`" -POC:$POC -OutOfDomain:$OutOfDomain -Troubleshooting:$Troubleshooting
             return
 		}
 		Else
