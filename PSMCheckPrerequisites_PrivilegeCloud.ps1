@@ -109,7 +109,7 @@ $global:InDebug = $PSBoundParameters.Debug.IsPresent
 $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 
 # Script Version
-[int]$versionNumber = "16"
+[int]$versionNumber = "17"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -1124,7 +1124,7 @@ Function ConsoleNETConnectivity
 }
 
 # @FUNCTION@ ======================================================================================================================
-# Name...........: ConsoleNETConnectivity
+# Name...........: ConsoleHTTPConnectivity
 # Description....: Tests Privilege Cloud network connectivity on port 443
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
@@ -1656,7 +1656,7 @@ param
 	[Alias("PortalURL")]
 	[ValidateScript({
 		If(![string]::IsNullOrEmpty($_)) {
-			$_ -like "*.privilegecloud.cyberark.com"
+			$_ -like "*.privilegecloud.cyberark.com*"
 		}
 		Else { $true }
 	})]
@@ -1842,7 +1842,7 @@ Function Test-VersionUpdate()
 {
 	# Define the URLs to be used
 	$pCloudServicesURL = "https://raw.githubusercontent.com/pCloudServices/ps/master"
-	$pCloudLatest = "$pCloudServicesURL/Latest1.txt"
+	$pCloudLatest = "$pCloudServicesURL/Latest.txt"
 	$pCloudScript = "$pCloudServicesURL/$g_ScriptName"
 	
 	Write-LogMessage -Type Info -Msg "Current version is: $versionNumber"
