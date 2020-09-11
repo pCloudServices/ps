@@ -1885,7 +1885,7 @@ Function Test-VersionUpdate()
 			Pause
 			#Invoke-Expression $scriptPathAndArgs
 			& more
-			Start-Process `"$g_ScriptName`" -POC:$POC -OutOfDomain:$OutOfDomain -Troubleshooting:$Troubleshooting
+			Start-Process `"$g_ScriptName`" #-POC:$POC -OutOfDomain:$OutOfDomain -Troubleshooting:$Troubleshooting
             return
 		}
 		Else
