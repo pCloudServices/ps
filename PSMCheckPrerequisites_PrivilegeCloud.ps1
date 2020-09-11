@@ -1842,7 +1842,7 @@ Function Test-VersionUpdate()
 {
 	# Define the URLs to be used
 	$pCloudServicesURL = "https://raw.githubusercontent.com/pCloudServices/ps/master"
-	$pCloudLatest = "$pCloudServicesURL/Latest.txt"
+	$pCloudLatest = "$pCloudServicesURL/Latest1.txt"
 	$pCloudScript = "$pCloudServicesURL/$g_ScriptName"
 	
 	Write-LogMessage -Type Info -Msg "Current version is: $versionNumber"
