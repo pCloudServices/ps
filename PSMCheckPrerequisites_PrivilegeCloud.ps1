@@ -60,6 +60,7 @@ $arrCheckPrerequisites = @(
 "CustomerPortalConnectivity",
 "ConsoleNETConnectivity",
 "ConsoleHTTPConnectivity",
+"SecureTunnelLocalPort"
 "CRLConnectivity",
 "OSVersion",
 "Processors",
@@ -71,10 +72,10 @@ $arrCheckPrerequisites = @(
 "NetworkAdapter",
 "PSRemoting",
 "WinRM",
+"WinRMListener",
 "NoPSCustomProfile",
 "CheckNoRDS",
 "PendingRestart",
-"NotAzureADJoinedOn2019",
 "GPO"
 )
 
@@ -126,6 +127,17 @@ $g_SKIP = "SKIP"
 
 
 #region Troubleshooting
+Function Show-Menu{
+    Clear-Host
+    Write-Host "================ Troubleshooting Guide ================"
+    
+    Write-Host "1: Press '1' to Test LDAPS Bind Account" -ForegroundColor Green
+    Write-Host "2: Press '2' to Enable TLS 1.0 (Only for POC)" -ForegroundColor Green
+    Write-Host "3: Press '3' to Retrieve DC Info" -ForegroundColor Green
+    Write-Host "4: Press '4' to Disable IPv6" -ForegroundColor Green
+    Write-Host "5: Press '5' to Enable WinRM HTTPS Listener" -ForegroundColor Green
+    Write-Host "Q: Press 'Q' to quit."
+}
 Function Troubleshooting{
 Function Connect-LDAPS(){
     [CmdletBinding()]
@@ -319,17 +331,90 @@ Function DisableIPV6(){
 
     Write-LogMessage -Type Success -Msg "Disabled IPv6, Restart machine to take affect."
 }
-
-Function Show-Menu
-{
+Function EnableWinRMListener(){
+Function Show-MenuWinRM{
     Clear-Host
-    Write-Host "================ Troubleshooting Guide ================"
+    Write-Host "================ Configure WinRM ================"
     
-    Write-Host "1: Press '1' to Test LDAPS Bind Account" -ForegroundColor Green
-    Write-Host "2: Press '2' to Enable TLS 1.0 (Only for POC)" -ForegroundColor Green
-    Write-Host "3: Press '3' to Retrieve DC Info" -ForegroundColor Green
-    Write-Host "4: Press '4' to Disable IPv6" -ForegroundColor Green
+    Write-Host "1: Press '1' to Generate new Self-Signed Cert" -ForegroundColor Magenta
+    Write-Host "2: Press '2' to Configure WinRM Listener with new Cert" -ForegroundColor Magenta
+    Write-Host "3: Press '3' to Add Inbound FW Rule (WinRM HTTPS 5986)" -ForegroundColor Magenta    
     Write-Host "Q: Press 'Q' to quit."
+}
+Function Add-newCert(){
+Try{
+#Generate new CERT
+Write-Host "Generating new self signed certificate, only do this once! (if you want to repeat this action, please manually delete the cert first to avoid clutter)." -ForegroundColor Cyan
+$newCert = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME -CertStoreLocation Cert:\LocalMachine\My
+$global:newCert = $newCert
+Write-Host "Done!" -ForegroundColor Green
+}
+Catch
+{
+"Error: $(Collect-ExceptionMessage $_.Exception)"
+}
+}
+Function ConfigWinRMList(){
+#Configure WinRM Listener with the new Cert
+Try{
+Write-Host "Configuring WinRM with HTTPS Listener, you can check later by typing 'Winrm e winrm/config/listener'" -ForegroundColor Cyan
+New-WSManInstance winrm/config/Listener -SelectorSet @{Transport='HTTPS'; Address="*"} -ValueSet @{Hostname="$env:COMPUTERNAME";CertificateThumbprint=$newCert.Thumbprint}
+Write-Host "Done!" -ForegroundColor Green
+Write-Host @"
+Some Useful Commands:
+
+[To delete the HTTPS Listener manually]:
+winrm delete winrm/config/Listener?Address=*+Transport=HTTPS
+
+[To Check the configuration manually]:
+Winrm e winrm/config/listener
+
+[To perform manual connect, run the 2 lines below]:
+`$so = New-PsSessionOption –SkipCACheck -SkipCNCheck
+Enter-PSSession -ComputerName localhost -Credential <yourdomainhere>\<domainuserhere> -UseSSL -SessionOption `$so
+
+"@ -ForegroundColor Green
+}
+Catch
+{
+#"Error: $(Collect-ExceptionMessage $_.Exception)"
+"Error: $($_.Exception)"
+}
+}
+Function Add-FWWinRMHTTPS(){
+#Add FW Rule
+Try{
+Write-Host "Adding local FW inbound rule, port 5986" -ForegroundColor Cyan
+netsh advfirewall firewall add rule name="Windows Remote Management (HTTPS-In)" dir=in action=allow protocol=TCP localport=5986
+Write-Host "Done!" -ForegroundColor Green
+}
+Catch
+{
+"Error: $(Collect-ExceptionMessage $_.Exception)"
+}
+}
+
+do
+ {
+     Show-MenuWinRM
+     $selection = Read-Host "Please select an option"
+     switch($selection)
+     {
+         '1' {
+              Add-newCert
+             }
+
+         '2' {
+              ConfigWinRMList
+             }
+         '3' {
+              Add-FWWinRMHTTPS
+             }
+     }
+     pause
+ }
+ until ($selection -eq 'q')
+ break
 }
 
 do
@@ -350,6 +435,9 @@ do
              }
          '4' {
               DisableIPV6
+             }
+         '5' {
+              EnableWinRMListener
              }
      }
      pause
@@ -688,6 +776,50 @@ Function WinRM
 	
 	return [PsCustomObject]@{
 		expected = "True";
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: WinRMListener
+# Description....: Check if WinRM is listening on the correct protocal and port
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+Function WinRMListener
+{
+	[OutputType([PsCustomObject])]
+	param ()
+	try{
+		Write-LogMessage -Type Verbose -Msg "Starting WinRMListener..."
+		$actual = ""
+		$result = $false
+		$errorMsg = ""
+
+        $winrmListen = Get-WSManInstance -ResourceURI winrm/config/listener -SelectorSet @{address="*";Transport="HTTPS"} -ErrorAction Stop
+		if ($winrmListen.Transport -eq "HTTPS" -and $winrmListen.Enabled -eq "true")
+		{
+			  $actual = $true
+			  $result = $True
+            #Add Another IF, after successful check for HTTPs, check the thumbprint of the cert, and see if NETWORK SERVICE user has access to it (just read permission).
+		} 
+		else 
+		{
+			  $actual = "Empty"
+			  $result = $false
+			  $errorMsg = "WinRM Listener isn't receiving on HTTPS, check it with the following command 'Winrm e winrm/config/listener' in ps"
+		}
+
+		Write-LogMessage -Type Verbose -Msg "Finished WinRMListener"
+	} catch {
+        $errorMsg = "WinRM Listener isn't receiving on HTTPS, check it with the following command 'Winrm e winrm/config/listener' in ps, you can also rerun the script with -Troubleshooting flag to configure it"
+		#$errorMsg = "Could not check WinRM Listener Port. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+	
+	return [PsCustomObject]@{
+		expected = $True;
 		actual = $actual;
 		errorMsg = $errorMsg;
 		result = $result;
@@ -1141,12 +1273,12 @@ Function ConsoleHTTPConnectivity
 		
 		$CustomerGenericGET = 0
 		Try{
-			$connectorConfigURL = "https://$g_ConsoleIP/connectorConfig/v1?customerId=35741f0e-71fe-4c1a-97c8-28594bf1281d&configItem=environmentFQDN"
+			$connectorConfigURL = "https://$g_ConsoleIP/connectorConfig/v1?customerId=94e9f371-6a95-4755-9128-5c5e2022cef3&configItem=environmentFQDN"
 			$CustomerGenericGET = Invoke-RestMethod -Uri $connectorConfigURL -TimeoutSec 20 -ContentType 'application/json'
 			If($null -ne $CustomerGenericGET)
 			{
 				$actual = $CustomerGenericGET.config.environmentFQDN.attributes.environmentFQDN.Length
-				$result = ($actual -eq 39)
+				$result = ($actual -eq 40)
 			}
 		} catch {
 			if ($_.Exception.Message -eq "Unable to connect to the remote server")
@@ -1171,7 +1303,49 @@ Function ConsoleHTTPConnectivity
 	}
 		
 	return [PsCustomObject]@{
-		expected = "39";
+		expected = "40";
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: ConsoleHTTPConnectivity
+# Description....: Tests Privilege Cloud network connectivity on port 443
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+Function SecureTunnelLocalPort
+{
+	[OutputType([PsCustomObject])]
+	param ()
+	try{
+		Write-LogMessage -Type Verbose -Msg "Starting SecureTunnelLocalPort..."
+		$actual = ""
+		$result = $false
+		$errorMsg = ""
+		
+		$lclPort = Get-NetTCPConnection | where {$_.LocalPort -eq 50000 -or $_.LocalPort -eq 50001}
+		if ($lclPort -eq $null)
+		{
+			  $actual = "Empty"
+			  $result = $True
+		} 
+		else 
+		{
+			  $actual = (get-process -Id ($lclport).OwningProcess).ProcessName
+			  $result = $false
+			  $errorMsg = "LocalPort 50000/50001 is taken by --> " + (get-process -Id ($lclport).OwningProcess).ProcessName + " <-- This port is needed for SecureTunnel functionality, if you're not going to install it you can disregard this error, otherwise we suggest checking what process is using it"
+		}
+
+		Write-LogMessage -Type Verbose -Msg "Finished SecureTunnelLocalPort"
+	} catch {
+		$errorMsg = "Could not check LocalPorts. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+	
+	return [PsCustomObject]@{
+		expected = $True;
 		actual = $actual;
 		errorMsg = $errorMsg;
 		result = $result;
@@ -1406,44 +1580,6 @@ Function SQLServerPermissions
 	}
 }
 
-# @FUNCTION@ ======================================================================================================================
-# Name...........: NotAzureADJoinedOn2019
-# Description....: Checks if the server is joined to Azure Domain and on Win2019 (known bug)
-# Parameters.....: None
-# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
-# =================================================================================================================================
-Function NotAzureADJoinedOn2019
-{
-	[OutputType([PsCustomObject])]
-	param ()
-	try{
-		$actual = $False
-		$result = $False
-		$errorMsg = ""
-		Write-LogMessage -Type Verbose -Msg "Starting NotAzureADJoinedOn2019..."
-		$CheckIfMachineIsOnAzure = ((((dsregcmd /status) -match "AzureAdJoined" | Out-String).Split(":") | Select-Object -Skip 1) -match "YES")
-		$Machine2019 = (Get-WmiObject Win32_OperatingSystem).caption -like '*2019*'
-
-		if ($CheckIfMachineIsOnAzure -and $Machine2019){
-			$errorMsg = "Known PSM Bug on Azure AD machine on 2019, consult services (Bug ID:14936)"
-		}
-		Else{
-			$actual = $True
-			$result = $True
-		}
-		
-		Write-LogMessage -Type Verbose -Msg "Finished NotAzureADJoinedOn2019"
-	} catch {
-		$errorMsg = "Could not check if server is joined to Azure Domain. Error: $(Collect-ExceptionMessage $_.Exception)"
-	}
-		
-	return [PsCustomObject]@{
-		expected = $True;
-		actual = $actual;
-		errorMsg = $errorMsg;
-		result = $result;
-	}
-}
 #endregion
 
 #region Helper functions
@@ -1551,7 +1687,7 @@ Function GetPublicIP()
 	$PublicIP = ""
 
 	try{
-		Write-LogMessage -Type Info -Msg "Attempting to retrieve Public IP, this can take up to 15 secs."
+		Write-LogMessage -Type Info -Msg "Attempting to retrieve Public IP..."
 		$PublicIP = (Invoke-WebRequest -Uri ipinfo.io/ip -UseBasicParsing -TimeoutSec 5).Content
 		$PublicIP | Out-File "$($env:COMPUTERNAME) PublicIP.txt"
 		Write-LogMessage -Type Success -Msg "Successfully fetched Public IP: $PublicIP and saved it in a local file '$($env:COMPUTERNAME) PublicIP.txt'"
@@ -1651,7 +1787,7 @@ param
 	[Alias("TunnelIP")]
 	[String]${Please enter your Tunnel Connector IP Address (Or leave empty)},
 	# Get the Portal URL
-	[Parameter(ParameterSetName='Regular',Mandatory=$true)]
+	[Parameter(ParameterSetName='Regular',Mandatory=$true, HelpMessage="Example: https://<customerDomain>.privilegecloud.cyberark.com")]
 	[AllowEmptyString()]
 	[Alias("PortalURL")]
 	[ValidateScript({
@@ -1660,13 +1796,13 @@ param
 		}
 		Else { $true }
 	})]
-	[String]${Please enter your provided portal URL Address, Example; https;//<customerDomain>.privilegecloud.cyberark.com (Or leave empty)}
+	[String]${Please enter your provided portal URL Address (Or leave empty)}
     
  )
  # ------ Copy parameter values entered ------
 $global:VaultIP = ${Please enter your Vault IP Address (Or leave empty)}
 $global:TunnelIP = ${Please enter your Tunnel Connector IP Address (Or leave empty)}
-$global:PortalURL = ${Please enter your provided portal URL Address, Example; https;//<customerDomain>.privilegecloud.cyberark.com (Or leave empty)}
+$global:PortalURL = ${Please enter your provided portal URL Address (Or leave empty)}#Example: https://<customerDomain>.privilegecloud.cyberark.com
  }
 
 Function AddLineToTable($action, $resultObject)
@@ -1842,7 +1978,7 @@ Function Test-VersionUpdate()
 {
 	# Define the URLs to be used
 	$pCloudServicesURL = "https://raw.githubusercontent.com/pCloudServices/ps/master"
-	$pCloudLatest = "$pCloudServicesURL/Latest1.txt"
+	$pCloudLatest = "$pCloudServicesURL/Latest.txt"
 	$pCloudScript = "$pCloudServicesURL/$g_ScriptName"
 	
 	Write-LogMessage -Type Info -Msg "Current version is: $versionNumber"
@@ -1850,6 +1986,41 @@ Function Test-VersionUpdate()
 	$checkVersion = ""
 	$webVersion = New-Object System.Net.WebClient
 
+#Ignore certificate error
+if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type)
+    {
+		$certCallback = @"
+			using System;
+			using System.Net;
+			using System.Net.Security;
+			using System.Security.Cryptography.X509Certificates;
+			public class ServerCertificateValidationCallback
+			{
+				public static void Ignore()
+				{
+					if(ServicePointManager.ServerCertificateValidationCallback ==null)
+					{
+						ServicePointManager.ServerCertificateValidationCallback += 
+							delegate
+							(
+								Object obj, 
+								X509Certificate certificate, 
+								X509Chain chain, 
+								SslPolicyErrors errors
+							)
+							{
+								return true;
+							};
+					}
+				}
+			}
+"@
+			Add-Type $certCallback
+	}
+	[ServerCertificateValidationCallback]::Ignore()
+    #ERROR: The request was aborted: Could not create SSL/TLS secure channel.
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+    
 	Try
 	{
 		$resWebCall = (Invoke-WebRequest -UseBasicParsing -Uri $pCloudLatest -ErrorAction Stop)
@@ -1880,13 +2051,10 @@ Function Test-VersionUpdate()
 			Rename-Item -path $PSCommandPath -NewName "$PSCommandPath.OLD"
 			Rename-Item -Path "$PSCommandPath.NEW" -NewName $g_ScriptName
 			Remove-Item -Path "$PSCommandPath.OLD"
-            		#$scriptPathAndArgs = "& `"$g_ScriptName`" -POC:$POC -OutOfDomain:$OutOfDomain -Troubleshooting:$Troubleshooting"
-			Write-LogMessage -Type Info -Msg "Finished Updating, relaunching the script"
+            $scriptPathAndArgs = "& `"$g_ScriptName`" -POC:$POC -OutOfDomain:$OutOfDomain -Troubleshooting:$Troubleshooting"
+			Write-LogMessage -Type Info -Msg "Finished Updating, please close window (Regular or ISE) and relaunch script."
 			Pause
-			#Invoke-Expression $scriptPathAndArgs
-			& more
-			Start-Process `"$g_ScriptName`" #-POC:$POC -OutOfDomain:$OutOfDomain -Troubleshooting:$Troubleshooting
-            return
+			Exit
 		}
 		Else
 		{
@@ -2130,8 +2298,8 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # SIG # Begin signature block
 # MIIfdQYJKoZIhvcNAQcCoIIfZjCCH2ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDxIJKRxa0fVsZz
-# qIT7UlJ8ia+dLQQJuGZhyJO77nxxQ6CCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDsiWYbzjDVWDSr
+# XGhzM4RZT6loV9BIw6so+W/k6k7U3qCCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
 # NStkZdZqMA0GCSqGSIb3DQEBCwUAMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBH
 # bG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9i
 # YWxTaWduIFJvb3QgQ0EwHhcNMTgwOTE5MDAwMDAwWhcNMjgwMTI4MTIwMDAwWjBM
@@ -2213,17 +2381,17 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # O0dsb2JhbFNpZ24gRXh0ZW5kZWQgVmFsaWRhdGlvbiBDb2RlU2lnbmluZyBDQSAt
 # IFNIQTI1NiAtIEczAgwhXYQh+9kPSKH6QS4wDQYJYIZIAWUDBAIBBQCgfDAQBgor
 # BgEEAYI3AgEMMQIwADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEE
-# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgss8qaip7faQ3
-# 3mwqGk0ztUZedZfcdi6jhQiuI4BhPuYwDQYJKoZIhvcNAQEBBQAEggEAW6eiLiLu
-# UWXt6KnnrwPGSq3ylqscmwXUFlN3v7+wKHsSvzNo+iTSjdVXC4nDPFrxGW7qBnJl
-# UDHsIG9fKGXLxi31XItOPX6iy/cVPWJPzC+rR36DA+9sP8yBM3DS50QkBU5C87f2
-# cqXCvsOO1exaP/+smYm+kcCn/tnDNwwqf8gPih2a7ApCq5fKJ/jZhT6G6ifVbMw0
-# iz9qnMVrDTw+dsaZuxPIQyTMlExRn21v7YA/XiSmiU54d2AoyvFSErCha6qTa/3x
-# MIc9DUO2kxnfqGv+1jynxl8h7a86g0R1ox7LYKRbyjFUgTtNKlm5uL56r/TQI3i4
-# sv2w2QeD8SaWkKGCDiswgg4nBgorBgEEAYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEH
+# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgNWm79zwDefNU
+# DOmdhbB8iRak/EDWdI2xsglWtecz46cwDQYJKoZIhvcNAQEBBQAEggEAT2qJdCva
+# TWij7W1w8+IKnLy9346y/SejvBil3xjb+K+xsXSXqTLcwJImA2RXUpkkmOl+4+B1
+# bmUsaduI9DCas8qiSRlwCUDjEStC1mqD2v0+/coKv60tttogTENpgSII18O2AfrL
+# wBC4RlyanrLc0G9TIm+F+llhlmHWM49gYnxLaZKNbczdPo9IzXtLHx237OiBHRwd
+# tAloTrTZl/g/+FBnAW2b5Zsz+YVm8415qvhnaDAAzHK+IkW+0Vf/R92IWsvah17m
+# b50AMXgSJTDxZPjwdokoKRfVBIroAfpdSw5d47ZZ6+mYeUFZ1TY9CWpTijHc+S/o
+# wnD+kW2XNIcWy6GCDiswgg4nBgorBgEEAYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEH
 # AqCCDgQwgg4AAgEDMQ0wCwYJYIZIAWUDBAIBMIH+BgsqhkiG9w0BCRABBKCB7gSB
-# 6zCB6AIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBTmjEEvg7Qvke6NUp5e
-# vL/1HEssYgIUWwIUOrk05VbkbFh5rRLZ/n9UgeMYDzIwMjAwOTEwMTMzOTUyWjAD
+# 6zCB6AIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBRaLV5u1gEWO33T0MMB
+# RIC9XDSuvAIUUC+EpBkKezvJytuhSfXHJNThDT4YDzIwMjEwMTE5MTQwNjAwWjAD
 # AgEeoIGGpIGDMIGAMQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29y
 # cG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNV
 # BAMTKFN5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzOgggqL
@@ -2287,13 +2455,13 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # ChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0
 # IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcg
 # Q0ECEHvU5a+6zAc/oQEjBCJBTRIwCwYJYIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJ
-# AzENBgsqhkiG9w0BCRABBDAcBgkqhkiG9w0BCQUxDxcNMjAwOTEwMTMzOTUyWjAv
-# BgkqhkiG9w0BCQQxIgQgHdoR3pcyRLwzqdWLoCHU//fonOBYuJxi+0uCMvD4a80w
+# AzENBgsqhkiG9w0BCRABBDAcBgkqhkiG9w0BCQUxDxcNMjEwMTE5MTQwNjAwWjAv
+# BgkqhkiG9w0BCQQxIgQgbnb1J8yrpzpSJ747ecyfhrX+enCack9GYclOZWcERN8w
 # NwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQgxHTOdgB9AjlODaXk3nwUxoD54oIBPP72
-# U+9dtx/fYfgwCwYJKoZIhvcNAQEBBIIBABadFtjylqALH4xiIvR+W+R9F2leYQjb
-# f8l0AGBS6o9B3Lea071bUCUp3ql3lK+3WZpBsql9JINJy116x90lJf9jTibkrikG
-# Is8+PS8e07AT1Jkq7ZgaMiKMGErr598+ojbUfgQXe7Ao7VQZoENrmUaqZzhBpfW7
-# hj6fDr7fUpc21FASu4DLBx4g36Q24bvYFm3pT706b3imerXrPPWDLcXsxMzYNq8p
-# lW+FBQ9KdNJgSVLpL/pSImtfPGXR6VNRqsuq8eFH1g0kd5AtpufUr8wsK50RR81y
-# ASrfNwKYQQXTMF7aaqBGHwd97MmnQFbaFdZ8wIAtKOJCoEbpGRBHLvo=
+# U+9dtx/fYfgwCwYJKoZIhvcNAQEBBIIBAE9GZC2+9s1dmwlERxixf9OoQePc3fU2
+# IaZ5lceFvdea3rm96GwJFbI98GJ3+AOAy+Jo5JBGnVfDkFLp9QlEVNgSKdqIzs0N
+# m6IEyXTMVk+r75Oy37AmNBOAn4CvpYv7fcYQ6Wq61jq+/3FeyeYZGmVNwi3Nd7dg
+# jdrMsKsM+N+2pTU5yfjd3c5erYVfmKvyOU7B2646s70oI0lgeA6zRo2NMxiDkEIQ
+# tbzYnLCxBZsS4aQhJH64AxZ7v7xD4EzLFz9f5c3kIgcyWEZh1fiT5jD2rVnw8hRj
+# rWdq3DqDJ6QyzRfierRFq2LWu/2eBaEJQU4rs6El+swu5sdDiict9u8=
 # SIG # End signature block
