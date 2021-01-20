@@ -370,7 +370,7 @@ winrm delete winrm/config/Listener?Address=*+Transport=HTTPS
 Winrm e winrm/config/listener
 
 [To perform manual connect, run the 2 lines below]:
-`$so = New-PsSessionOption –SkipCACheck -SkipCNCheck
+`$so = New-PsSessionOption -SkipCACheck -SkipCNCheck
 Enter-PSSession -ComputerName localhost -Credential <yourdomainhere>\<domainuserhere> -UseSSL -SessionOption `$so
 
 "@ -ForegroundColor Green
@@ -597,7 +597,7 @@ Function NetworkAdapter
 		$result = $false
 		$errorMsg = ""
 
-		$actual = (Get-NetAdapter | ? status -ne "Up")
+		$actual = (Get-NetAdapter | Where-Object status -ne "Up")
 		if ($actual)
 		{
 			$errorMsg = "Not all NICs are up, the installer requires it (you can disable it again afterwards)."
@@ -639,7 +639,7 @@ Function IPV6
 		$errorMsg = ""
 	
 		$arrInterfaces = (Get-WmiObject -class Win32_NetworkAdapterConfiguration -filter "ipenabled = TRUE").IPAddress
-		$IPv6Status = ($arrInterfaces | where { $_.contains("::") }).Count -gt 0
+		$IPv6Status = ($arrInterfaces | Where-Object { $_.contains("::") }).Count -gt 0
 
 		if($IPv6Status)
 		{
@@ -911,10 +911,10 @@ Function KBs
 		 
 			else
 			{
-				$pcHotFixes = Get-HotFix $hotFixes -EA ignore | select -Property HotFixID 
+				$pcHotFixes = Get-HotFix $hotFixes -EA ignore | Select-Object -Property HotFixID 
 		
 				#none of the KBs installed
-				if($pcHotFixes -eq $null)
+				if($null -eq $pcHotFixes)
 				{
 					$errorMsg = "KBs not installed: $hotFixes"
 					$actual = "Not Installed"
@@ -923,7 +923,7 @@ Function KBs
 
 				else
 				{	
-					$HotfixesNotInstalled = $hotFixes | Where { $_ -notin $pcHotFixes }
+					$HotfixesNotInstalled = $hotFixes | Where-Object { $_ -notin $pcHotFixes }
 		
 					if($HotfixesNotInstalled.Count -gt 0)
 					{			
@@ -967,7 +967,7 @@ Function ServerInDomain
 		Write-LogMessage -Type Verbose -Msg "Starting ServerInDomain..."
 		$result = $false
     
-		if ((gwmi win32_computersystem).partofdomain) 
+		if ((Get-WmiObject win32_computersystem).partofdomain) 
 		{
 			  $actual = "In Domain"
 			  $result = $true
@@ -1054,8 +1054,8 @@ Function PendingRestart
 		$actual = ""
 		$result = $false
 
-		$regComponentBasedServicing = (dir 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\' | where { $_.Name -contains "RebootPending" })
-		$regWindowsUpdate = (dir 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\' | where { $_.Name -contains "RebootRequired" })
+		$regComponentBasedServicing = (Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\' | Where-Object { $_.Name -contains "RebootPending" })
+		$regWindowsUpdate = (Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\' | Where-Object { $_.Name -contains "RebootRequired" })
 		$regSessionManager = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\PendingFileRenameOperations' -ErrorAction Ignore)
 		$wmiClientUtilities = (Invoke-WmiMethod -Namespace "Root\CCM\ClientSDK" -Class CCM_ClientUtilities -Name DetermineIfRebootPending -ErrorAction Ignore).RebootPending
 		
@@ -1157,38 +1157,42 @@ Function GPO
 		gpresult /f /x $path *> $null
 
 		[xml]$xml = Get-Content $path
-
-		if($arrGPO.Count -gt 0)
+		$RDSGPOs = $xml.Rsop.ComputerResults.ExtensionData.extension.policy | Where-Object { $_.Category -match "Windows Components" }
+		if($RDSGPOs.Count -gt 0)
 		{
-			ForEach ($gpo in $arrGPO)
+			ForEach($item in $RDSGPOs)
 			{
-				$errorMsg = ""
-				$GPOValueResult = ReadGPOValue -gpoXML $xml -gpoName $gpo.Name 
-
-				if ([string]::IsNullOrEmpty($GPOValueResult))
+				$skip = $false
+				$name = "GPO: $($item.Name)"
+				$errorMsg = ""	
+				# Check if GPO exists in the critical GPO items
+				If($arrGPO -match $item.name)
 				{
-					$actual = "Not Configured"
-					$gpoResult = $true
-				}
-				else
-				{
-					$actual = $GPOValueResult
-
-					$gpoResult = ($gpo.Expected -eq $GPOValueResult)
-					
+					$expected = $($arrGPO -match $item.name).Expected
+					$gpoResult = ($Expected -eq $($item.state))
 					if(-not $gpoResult )
 					{
 						$compatible = $false
-						$errorMsg = "Expected:"+$gpo.Expected+" Actual:"+$actual
+						$errorMsg = "Expected:"+$Expected+" Actual:"+$($item.state)
 					}
 				}
-			
-				$name = "GPO: "+$gpo.Name
-				Write-LogMessage -Type Verbose -Msg ("{0}; Expected: {1}; Actual: {2}" -f $name, $gpo.Expected, $actual)
-				$reportObj = @{expected = $gpo.Expected; actual = $actual; errorMsg = $errorMsg; result = $gpoResult;}
-				#AddLineToReport $name $reportObj #TODO: Check this method
-				AddLineToTable $name $reportObj
-			}#loop end
+				# Check if GPO exists in RDS area
+				elseif($item.Category -match "Remote Desktop Services")
+				{
+					$expected = $false
+					$compatible = $false
+					$errorMsg = "Expected:'Not Configured' Actual:"+$($item.state)
+				}
+				else {
+					$skip = $true
+				}
+				if(!$skip)
+				{
+					Write-LogMessage -Type Verbose -Msg ("{0}; Expected: {1}; Actual: {2}" -f $name, $Expected, $item.state)
+					$reportObj = @{expected = $expected; actual = $($item.state); errorMsg = $errorMsg; result = $gpoResult;}
+					AddLineToTable $name $reportObj
+				}
+			}		
 		}
 
 		$errorMsg = $g_SKIP
@@ -1326,8 +1330,8 @@ Function SecureTunnelLocalPort
 		$result = $false
 		$errorMsg = ""
 		
-		$lclPort = Get-NetTCPConnection | where {$_.LocalPort -eq 50000 -or $_.LocalPort -eq 50001}
-		if ($lclPort -eq $null)
+		$lclPort = Get-NetTCPConnection | Where-Object {$_.LocalPort -eq 50000 -or $_.LocalPort -eq 50001}
+		if ($null -eq $lclPort)
 		{
 			  $actual = "Empty"
 			  $result = $True
@@ -1371,8 +1375,8 @@ Function CRLConnectivity
 		$cert1 = 0
 		$cert2 = 0
 		Try{
-			$cert1 = Invoke-WebRequest -Uri http://crl3.digicert.com/CloudFlareIncECCCA2.crl -TimeoutSec 6 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -UseBasicParsing  | select -ExpandProperty StatusCode
-			$cert2 = Invoke-WebRequest -Uri http://crl4.digicert.com/CloudFlareIncECCCA2.crl -TimeoutSec 6 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -UseBasicParsing | select -ExpandProperty StatusCode
+			$cert1 = Invoke-WebRequest -Uri http://crl3.digicert.com/CloudFlareIncECCCA2.crl -TimeoutSec 6 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -UseBasicParsing  | Select-Object -ExpandProperty StatusCode
+			$cert2 = Invoke-WebRequest -Uri http://crl4.digicert.com/CloudFlareIncECCCA2.crl -TimeoutSec 6 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -UseBasicParsing | Select-Object -ExpandProperty StatusCode
 
 			If(($cert1 -eq 200) -and ($cert2 -eq 200))
 			{
@@ -1542,7 +1546,7 @@ Function SQLServerPermissions
 		{
 			Write-LogMessage -Type Verbose -Msg "Checking $sec group policy for Local Administrators access"
 			$administrators = Select-String $path -Pattern $sec
-			if($administrators -eq $null)
+			if($null -eq $administrators)
 			{
 				Write-LogMessage -Type Verbose -Msg "No Local Administrators access for $sec group policy"
 				$actual = $result = $False
@@ -1603,7 +1607,7 @@ Function Test-NetConnectivity
 		try{
 			If(Get-Command Test-NetConnection -ErrorAction Ignore)
 			{
-				$retNetTest = Test-NetConnection -ComputerName $ComputerName -Port $Port -WarningVariable retWarning | select -ExpandProperty "TcpTestSucceeded"
+				$retNetTest = Test-NetConnection -ComputerName $ComputerName -Port $Port -WarningVariable retWarning | Select-Object -ExpandProperty "TcpTestSucceeded"
 				If($retWarning -like "*TCP connect to* failed" -or $retWarning -like "*Name resolution of*")
 				{
 					$errorMsg = "Network connectivity failed, check FW rules to '$ComputerName' on port '$Port' are allowed"
@@ -1696,73 +1700,6 @@ Function GetPublicIP()
 	catch{
 		Throw $(New-Object System.Exception ("GetPublicIP: Couldn't grab Public IP for you, you'll have to do it manually",$_.Exception))
 	}
-}
-
-# @FUNCTION@ ======================================================================================================================
-# Name...........: ReadGPOValue
-# Description....: Returns the input GPO name state
-# Parameters.....: GPO XML file (as XML), GPO Name to check
-# Return Values..: String, GPO State
-# =================================================================================================================================
-Function ReadGPOValue
-{
-	param(
-		[XML]$gpoXML,
-		[String]$gpoName
-	)
-	
-	$PolicyName = ""
-	$PolicyState = ""
-	$PolicyIdentifier = ""
-	$PolicyValue = ""
-	
-	Write-LogMessage -Type Verbose -Msg "Checking '$gpoName' in GPO report..."
-	
-    $extentionsDataNum = $gpoXML.Rsop.ComputerResults.ExtensionData.Count
-	# Search for the gpo in the Extension Data section
-	for ($extentionData = 0; $extentionData -lt $extentionsDataNum; $extentionData++)
-	{
-		$PoliciesNumber =  $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy.Count
-
-        if ($PoliciesNumber -eq $null)
-        {
-           $PolicyName = $gpoXML.Rsop.ComputerResults.ExtensionData.Extension.Policy.Name
-
-           if ($PolicyName -eq $gpoName)
-			{
-				$PolicyState = $gpoXML.Rsop.ComputerResults.ExtensionData.Extension.Policy.State 
-				$PolicyIdentifier = $gpoXML.Rsop.ComputerResults.ExtensionData.Extension.Policy.gpo.Identifier.'#text'
-
-				if ($gpoXML.Rsop.ComputerResults.ExtensionData.Extension.Policy.value.Name)
-				{
-					$PolicyValue = $gpoXML.Rsop.ComputerResults.ExtensionData.Extension.Policy.value.Name
-				}
-				# Exit For
-				break
-			}
-        } else {
-			for ($node = 0 ; $node -lt $PoliciesNumber; $node++)
-			{
-				$PolicyName = $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].Name
-
-				if ($PolicyName -eq $gpoName)
-				{
-					$PolicyState = $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].State 
-					$PolicyIdentifier = $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].gpo.Identifier.'#text'
-
-					if ($gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].value.Name)
-					{
-						$PolicyValue = $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].value.Name
-					}
-
-					# Exit For
-					break
-				}
-			}
-		}
-	}
-	Write-LogMessage -Type Verbose -Msg ("Policy Name {0} is in state {1} with current value {2}" -f $PolicyName, $PolicyState, $PolicyValue)
-    return $PolicyState
 }
 
 # @FUNCTION@ ======================================================================================================================
@@ -2298,8 +2235,8 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # SIG # Begin signature block
 # MIIfdQYJKoZIhvcNAQcCoIIfZjCCH2ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDsiWYbzjDVWDSr
-# XGhzM4RZT6loV9BIw6so+W/k6k7U3qCCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDzEpt5E6iET3C/
+# fpyuHoKMV2vWgUz+IxCH1a/6KkOtp6CCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
 # NStkZdZqMA0GCSqGSIb3DQEBCwUAMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBH
 # bG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9i
 # YWxTaWduIFJvb3QgQ0EwHhcNMTgwOTE5MDAwMDAwWhcNMjgwMTI4MTIwMDAwWjBM
@@ -2381,17 +2318,17 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # O0dsb2JhbFNpZ24gRXh0ZW5kZWQgVmFsaWRhdGlvbiBDb2RlU2lnbmluZyBDQSAt
 # IFNIQTI1NiAtIEczAgwhXYQh+9kPSKH6QS4wDQYJYIZIAWUDBAIBBQCgfDAQBgor
 # BgEEAYI3AgEMMQIwADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEE
-# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgNWm79zwDefNU
-# DOmdhbB8iRak/EDWdI2xsglWtecz46cwDQYJKoZIhvcNAQEBBQAEggEAT2qJdCva
-# TWij7W1w8+IKnLy9346y/SejvBil3xjb+K+xsXSXqTLcwJImA2RXUpkkmOl+4+B1
-# bmUsaduI9DCas8qiSRlwCUDjEStC1mqD2v0+/coKv60tttogTENpgSII18O2AfrL
-# wBC4RlyanrLc0G9TIm+F+llhlmHWM49gYnxLaZKNbczdPo9IzXtLHx237OiBHRwd
-# tAloTrTZl/g/+FBnAW2b5Zsz+YVm8415qvhnaDAAzHK+IkW+0Vf/R92IWsvah17m
-# b50AMXgSJTDxZPjwdokoKRfVBIroAfpdSw5d47ZZ6+mYeUFZ1TY9CWpTijHc+S/o
-# wnD+kW2XNIcWy6GCDiswgg4nBgorBgEEAYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEH
+# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQg6mnGeDvqVE2I
+# 1BK7X7Ff8kVGz5NHbxUdkTt4zBHMiKAwDQYJKoZIhvcNAQEBBQAEggEAVUHrchlf
+# 0EJXMTiLsPpo1CJX4Xckfso0h7D6SeK1vqK7te+XmIxq7wLqiAxy1tP1rwqs1g47
+# DAqqzLerRqoa86yClMQRSM6ANAhzgreb9Yo6AuMKrdhYhr5hcd/cN99osG6VSqDL
+# LJ5fpapbBC9aAzzYWvKTRTlmtVIozGtLaddkTWyRyEsK1oAemH1cZN42TA7Fjys6
+# hrt+zeig2CZiJRLvsQy493fxowNTjzz2Hf1z0FYTlIPOF8zdVz9ja1A0nV8ZnGE9
+# ISGfqA1WBYeSVOC56PfTq2RQ1jL/SDuuKwgZ+o1FU57cbX5+UOyWCVnT/4AQA8bZ
+# rTOSwByNnP5z/KGCDiswgg4nBgorBgEEAYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEH
 # AqCCDgQwgg4AAgEDMQ0wCwYJYIZIAWUDBAIBMIH+BgsqhkiG9w0BCRABBKCB7gSB
-# 6zCB6AIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBRaLV5u1gEWO33T0MMB
-# RIC9XDSuvAIUUC+EpBkKezvJytuhSfXHJNThDT4YDzIwMjEwMTE5MTQwNjAwWjAD
+# 6zCB6AIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBRvlDAxabT4yDpo/tE8
+# GhzULQbEygIUcQV74n9Na3oEHFLwKF47895F9aEYDzIwMjEwMTIwMTQ0NzA4WjAD
 # AgEeoIGGpIGDMIGAMQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29y
 # cG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNV
 # BAMTKFN5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzOgggqL
@@ -2455,13 +2392,13 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # ChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0
 # IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcg
 # Q0ECEHvU5a+6zAc/oQEjBCJBTRIwCwYJYIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJ
-# AzENBgsqhkiG9w0BCRABBDAcBgkqhkiG9w0BCQUxDxcNMjEwMTE5MTQwNjAwWjAv
-# BgkqhkiG9w0BCQQxIgQgbnb1J8yrpzpSJ747ecyfhrX+enCack9GYclOZWcERN8w
+# AzENBgsqhkiG9w0BCRABBDAcBgkqhkiG9w0BCQUxDxcNMjEwMTIwMTQ0NzA4WjAv
+# BgkqhkiG9w0BCQQxIgQgvS22YoT1rkFv3gNxJ1NhuXVf0+Vu5/WUCsmeyptCzTAw
 # NwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQgxHTOdgB9AjlODaXk3nwUxoD54oIBPP72
-# U+9dtx/fYfgwCwYJKoZIhvcNAQEBBIIBAE9GZC2+9s1dmwlERxixf9OoQePc3fU2
-# IaZ5lceFvdea3rm96GwJFbI98GJ3+AOAy+Jo5JBGnVfDkFLp9QlEVNgSKdqIzs0N
-# m6IEyXTMVk+r75Oy37AmNBOAn4CvpYv7fcYQ6Wq61jq+/3FeyeYZGmVNwi3Nd7dg
-# jdrMsKsM+N+2pTU5yfjd3c5erYVfmKvyOU7B2646s70oI0lgeA6zRo2NMxiDkEIQ
-# tbzYnLCxBZsS4aQhJH64AxZ7v7xD4EzLFz9f5c3kIgcyWEZh1fiT5jD2rVnw8hRj
-# rWdq3DqDJ6QyzRfierRFq2LWu/2eBaEJQU4rs6El+swu5sdDiict9u8=
+# U+9dtx/fYfgwCwYJKoZIhvcNAQEBBIIBAABH47fLxuMcKOPwQLLOvo715RnpjLyI
+# yOaVKn0aWLLp8eLwM3nZgI/+h0yYjDKqrkQJVbaJDNE5eemhLPva5BkADvW0Tii2
+# okhXbz+Eu6aSjQYeqGwAvHKrUfjchp2MJkJPc0St74z3OajWNWgWx3XCej/J+1Zn
+# eItQEJYJWi07PZx8gfzPMzYBZkiQ+3UpDSa2xkdlYzy33x07ZAvBKzXemU+MQ5rH
+# 5Nfacq8OTxmf3uszVoMt19laaADu/oifUxsxDb2lZo0KkUtpm/jugz3+eEANixlu
+# RL7kdsSnizKuqsa0xSAHFZYV49izxAyojDbWTcwiu9ruAM7CMn8GhtE=
 # SIG # End signature block
