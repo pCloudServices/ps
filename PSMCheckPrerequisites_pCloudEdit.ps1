@@ -10,12 +10,14 @@
 #
 #
 ###########################################################################
-[CmdletBinding(DefaultParameterSetName="Regular")]
+
  <#
   .DESCRIPTION
   Script checks prerequisites for Privilege Cloud Connector machine
   
   .PARAMETER OutOfDomain
+  .PARAMETER POC
+  .PARAMETER Troubleshooting
  
   .EXAMPLE 
   PS C:\> .\PSMCheckPrerequisites.ps1
@@ -30,9 +32,8 @@
   PS C:\> .\PSMCheckPrerequisites.ps1 -POC
   
 #>
-
-param
-(
+[CmdletBinding(DefaultParameterSetName="Regular")]
+param(
 	# Use this switch to Exclude the Domain user check
 	[Parameter(ParameterSetName='Regular',Mandatory=$false)]
 	[switch]$OutOfDomain,
@@ -41,35 +42,8 @@ param
 	[switch]$POC,
 	# Use this switch to troubleshoot specific items
 	[Parameter(ParameterSetName='Troubleshoot',Mandatory=$false)]
-	[switch]$Troubleshooting,
-	# Get the Vault IP
-	[Parameter(ParameterSetName='Regular',Mandatory=$true)]
-	[AllowEmptyString()]
-	[Alias("VaultIP")]
-	[String]${Please enter your Vault IP Address (Or leave empty)},
-	# Get the Tunnel IP
-	[Parameter(ParameterSetName='Regular',Mandatory=$true)]
-	[AllowEmptyString()]
-	[Alias("TunnelIP")]
-	[String]${Please enter your Tunnel Connector IP Address (Or leave empty)},
-	# Get the Portal URL
-	[Parameter(ParameterSetName='Regular',Mandatory=$true)]
-	[AllowEmptyString()]
-	[Alias("PortalURL")]
-	[ValidateScript({
-		If(![string]::IsNullOrEmpty($_)) {
-			$_ -like "*.privilegecloud.cyberark.com"
-		}
-		Else { $true }
-	})]
-	[String]${Please enter your provided portal URL Address, Example; https;//<customerDomain>.privilegecloud.cyberark.com (Or leave empty)}
-    
- )
-
-# ------ Copy parameter values entered ------
-$VaultIP = ${Please enter your Vault IP Address (Or leave empty)}
-$TunnelIP = ${Please enter your Tunnel Connector IP Address (Or leave empty)}
-$PortalURL = ${Please enter your provided portal URL Address, Example; https;//<customerDomain>.privilegecloud.cyberark.com (Or leave empty)}
+	[switch]$Troubleshooting
+)
 
 # ------ SET Script Prerequisites ------
 ##############################################################
@@ -88,6 +62,7 @@ $arrCheckPrerequisites = @(
 "CustomerPortalConnectivity",
 "ConsoleNETConnectivity",
 "ConsoleHTTPConnectivity",
+"SecureTunnelLocalPort"
 "CRLConnectivity",
 "OSVersion",
 "Processors",
@@ -99,10 +74,10 @@ $arrCheckPrerequisites = @(
 "NetworkAdapter",
 "PSRemoting",
 "WinRM",
+"WinRMListener",
 "NoPSCustomProfile",
 "CheckNoRDS",
 "PendingRestart",
-"NotAzureADJoinedOn2019",
 "GPO"
 )
 
@@ -137,7 +112,7 @@ $global:InDebug = $PSBoundParameters.Debug.IsPresent
 $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 
 # Script Version
-[int]$versionNumber = "15"
+[int]$versionNumber = "18"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -146,7 +121,7 @@ $global:LOG_FILE_PATH = "$ScriptLocation\PrivCloud-CheckPrerequisites-$LOG_DATE.
 
 # ------ SET Global Parameters ------
 $global:g_ConsoleIP = "console.privilegecloud.cyberark.com"
-$global:g_ScriptName = "PSMCheckPrerequisites_pCloudEdit.ps1"
+$global:g_ScriptName = "PSMCheckPrerequisites_PrivilegeCloud.ps1"
 
 $global:table = ""
 $SEPARATE_LINE = "------------------------------------------------------------------------" 
@@ -154,6 +129,18 @@ $g_SKIP = "SKIP"
 
 
 #region Troubleshooting
+Function Show-Menu{
+    Clear-Host
+    Write-Host "================ Troubleshooting Guide ================"
+    
+    Write-Host "1: Press '1' to Test LDAPS Bind Account" -ForegroundColor Green
+    Write-Host "2: Press '2' to Enable TLS 1.0 (Only for POC)" -ForegroundColor Green
+    Write-Host "3: Press '3' to Retrieve DC Info" -ForegroundColor Green
+    Write-Host "4: Press '4' to Disable IPv6" -ForegroundColor Green
+    Write-Host "5: Press '5' to Enable WinRM HTTPS Listener" -ForegroundColor Green
+    Write-Host "6: Press '6' to Config WinRMListener Permissions" -ForegroundColor Green
+    Write-Host "Q: Press 'Q' to quit."
+}
 Function Troubleshooting{
 Function Connect-LDAPS(){
     [CmdletBinding()]
@@ -347,17 +334,121 @@ Function DisableIPV6(){
 
     Write-LogMessage -Type Success -Msg "Disabled IPv6, Restart machine to take affect."
 }
-
-Function Show-Menu
-{
+Function EnableWinRMListener(){
+Function Show-MenuWinRM{
     Clear-Host
-    Write-Host "================ Troubleshooting Guide ================"
+    Write-Host "================ Configure WinRM ================"
     
-    Write-Host "1: Press '1' to Test LDAPS Bind Account" -ForegroundColor Green
-    Write-Host "2: Press '2' to Enable TLS 1.0 (Only for POC)" -ForegroundColor Green
-    Write-Host "3: Press '3' to Retrieve DC Info" -ForegroundColor Green
-    Write-Host "4: Press '4' to Disable IPv6" -ForegroundColor Green
+    Write-Host "1: Press '1' to Generate new Self-Signed Cert" -ForegroundColor Magenta
+    Write-Host "2: Press '2' to Configure WinRM Listener with new Cert" -ForegroundColor Magenta
+    Write-Host "3: Press '3' to Add Inbound FW Rule (WinRM HTTPS 5986)" -ForegroundColor Magenta    
     Write-Host "Q: Press 'Q' to quit."
+}
+Function Add-newCert(){
+Try{
+#Generate new CERT
+Write-Host "Generating new self signed certificate, only do this once! (if you want to repeat this action, please manually delete the cert first to avoid clutter)." -ForegroundColor Cyan
+$newCert = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME -CertStoreLocation Cert:\LocalMachine\My
+$global:newCert = $newCert
+Write-Host "Done!" -ForegroundColor Green
+}
+Catch
+{
+"Error: $(Collect-ExceptionMessage $_.Exception)"
+}
+}
+Function ConfigWinRMList(){
+#Configure WinRM Listener with the new Cert
+Try{
+Write-Host "Configuring WinRM with HTTPS Listener, you can check later by typing 'Winrm e winrm/config/listener'" -ForegroundColor Cyan
+New-WSManInstance winrm/config/Listener -SelectorSet @{Transport='HTTPS'; Address="*"} -ValueSet @{Hostname="$env:COMPUTERNAME";CertificateThumbprint=$newCert.Thumbprint}
+Write-Host "Done!" -ForegroundColor Green
+Write-Host @"
+Some Useful Commands:
+
+[To delete the HTTPS Listener manually]:
+winrm delete winrm/config/Listener?Address=*+Transport=HTTPS
+
+[To Check the configuration manually]:
+Winrm e winrm/config/listener
+
+[To perform manual connect, run the 2 lines below]:
+`$so = New-PsSessionOption -SkipCACheck -SkipCNCheck
+Enter-PSSession -ComputerName localhost -Credential <yourdomainhere>\<domainuserhere> -UseSSL -SessionOption `$so
+
+"@ -ForegroundColor Green
+}
+Catch
+{
+#"Error: $(Collect-ExceptionMessage $_.Exception)"
+"Error: $($_.Exception)"
+}
+}
+Function Add-FWWinRMHTTPS(){
+#Add FW Rule
+Try{
+Write-Host "Adding local FW inbound rule, port 5986" -ForegroundColor Cyan
+netsh advfirewall firewall add rule name="Windows Remote Management (HTTPS-In)" dir=in action=allow protocol=TCP localport=5986
+Write-Host "Done!" -ForegroundColor Green
+}
+Catch
+{
+"Error: $(Collect-ExceptionMessage $_.Exception)"
+}
+}
+
+do
+ {
+     Show-MenuWinRM
+     $selection = Read-Host "Please select an option"
+     switch($selection)
+     {
+         '1' {
+              Add-newCert
+             }
+
+         '2' {
+              ConfigWinRMList
+             }
+         '3' {
+              Add-FWWinRMHTTPS
+             }
+     }
+     pause
+ }
+ until ($selection -eq 'q')
+ break
+}
+Function WinRMListenerPermissions(){
+Write-Host "Will attempt to add 'NETWORK SERVICE' user read permission for the WinRM HTTPS Certificate"
+$winrmListen = Get-WSManInstance -ResourceURI winrm/config/listener -SelectorSet @{address="*";Transport="HTTPS"} -ErrorAction Stop
+
+#Get Cert permissions
+$getWinRMCertThumb = Get-ChildItem Cert:\LocalMachine\My | Where-Object {$_.Thumbprint -eq ($winrmListen.CertificateThumbprint)}
+$rsaCert = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($getWinRMCertThumb)
+$filename = $rsaCert.key.uniquename
+$certkeypath = "C:\ProgramData\Microsoft\Crypto\Keys\$filename"
+$certPermissions =  Get-Acl -Path $certkeypath
+
+#Set Cert permissions
+$newRule = New-Object Security.accesscontrol.filesystemaccessrule "NETWORK SERVICE", "read", allow
+$certPermissions.AddAccessRule($newRule)
+Set-Acl -Path $certkeypath -AclObject $certPermissions
+$certPermissions =  Get-Acl -Path $certkeypath
+
+If ($certPermissions.Access.IdentityReference -contains "NT AUTHORITY\NETWORK SERVICE"){
+Write-Host ""
+Write-Host "Success!" -ForegroundColor Green
+Write-Host "Review the changes:" -ForegroundColor Green
+Write-Host $certPermissions.Access.IdentityReference -Separator `n
+Write-Host ""
+}
+Else{
+Write-Host "Something went wrong, You'll have to do it manually :(" -ForegroundColor Red
+Write-Host "Launch MMC -> Certificates -> Find the cert WinRM is using -> Right Click -> All Tasks -> Manage Private Keys -> Grant 'NETWORK SERVICE' read permissions"
+}
+
+
 }
 
 do
@@ -369,7 +460,6 @@ do
          '1' {
               Connect-LDAPS
              }
-
          '2' {
               EnableTLS1
              }
@@ -378,6 +468,12 @@ do
              }
          '4' {
               DisableIPV6
+             }
+         '5' {
+              EnableWinRMListener
+             }
+         '6' {
+              WinRMListenerPermissions
              }
      }
      pause
@@ -537,7 +633,7 @@ Function NetworkAdapter
 		$result = $false
 		$errorMsg = ""
 
-		$actual = (Get-NetAdapter | ? status -ne "Up")
+		$actual = (Get-NetAdapter | Where-Object status -ne "Up")
 		if ($actual)
 		{
 			$errorMsg = "Not all NICs are up, the installer requires it (you can disable it again afterwards)."
@@ -579,7 +675,7 @@ Function IPV6
 		$errorMsg = ""
 	
 		$arrInterfaces = (Get-WmiObject -class Win32_NetworkAdapterConfiguration -filter "ipenabled = TRUE").IPAddress
-		$IPv6Status = ($arrInterfaces | where { $_.contains("::") }).Count -gt 0
+		$IPv6Status = ($arrInterfaces | Where-Object { $_.contains("::") }).Count -gt 0
 
 		if($IPv6Status)
 		{
@@ -723,6 +819,65 @@ Function WinRM
 }
 
 # @FUNCTION@ ======================================================================================================================
+# Name...........: WinRMListener
+# Description....: Check if WinRM is listening on the correct protocal and port
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+Function WinRMListener
+{
+	[OutputType([PsCustomObject])]
+	param ()
+	try{
+		Write-LogMessage -Type Verbose -Msg "Starting WinRMListener..."
+		$actual = ""
+		$result = $false
+		$errorMsg = ""
+
+        $winrmListen = Get-WSManInstance -ResourceURI winrm/config/listener -SelectorSet @{address="*";Transport="HTTPS"} -ErrorAction Stop
+		if ($winrmListen.Transport -eq "HTTPS" -and $winrmListen.Enabled -eq "true")
+		{
+              #Get Cert permissions
+              $getWinRMCertThumb = Get-ChildItem Cert:\LocalMachine\My | Where-Object {$_.Thumbprint -eq ($winrmListen.CertificateThumbprint)}
+              $rsaCert = [System.Security.Cryptography.X509Certificates.RSACertificateExtensions]::GetRSAPrivateKey($getWinRMCertThumb)
+              $filename = $rsaCert.key.uniquename
+              $certkeypath = "C:\ProgramData\Microsoft\Crypto\Keys\$filename"
+              $certPermissions =  Get-Acl -Path $certkeypath
+              If ($certPermissions.Access.IdentityReference -contains "NT AUTHORITY\NETWORK SERVICE")
+              {
+			  $actual = $true
+			  $result = $True
+              }
+              Else
+              {
+              $actual = "Empty"
+			  $result = $false
+			  $errorMsg = "WinRM HTTPS Cert doesn't have correct permissions (NETWORK SERVICE user needs 'read' permission, adjust this manually, if you don't know how, rerun the script with -Troubleshooting flag and select 'WinRMListenerPermissions'"
+              }
+            #Add Another IF, after successful check for HTTPs, check the thumbprint of the cert, and see if NETWORK SERVICE user has access to it (just read permission).
+		} 
+		else 
+		{
+			  $actual = "Empty"
+			  $result = $false
+			  $errorMsg = "WinRM Listener isn't receiving on HTTPS, check it with the following command 'Winrm e winrm/config/listener' in ps"
+		}
+
+		Write-LogMessage -Type Verbose -Msg "Finished WinRMListener"
+	} catch {
+        $errorMsg = "WinRM Listener isn't receiving on HTTPS, check it with the following command 'Winrm e winrm/config/listener' in ps, you can also rerun the script with -Troubleshooting flag to configure it"
+		#$errorMsg = "Could not check WinRM Listener Port. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+	
+	return [PsCustomObject]@{
+		expected = $True;
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+# @FUNCTION@ ======================================================================================================================
 # Name...........: NoPSCustomProfile
 # Description....: Check if there is no PowerShell custom profile
 # Parameters.....: None
@@ -807,10 +962,10 @@ Function KBs
 		 
 			else
 			{
-				$pcHotFixes = Get-HotFix $hotFixes -EA ignore | select -Property HotFixID 
+				$pcHotFixes = Get-HotFix $hotFixes -EA ignore | Select-Object -Property HotFixID 
 		
 				#none of the KBs installed
-				if($pcHotFixes -eq $null)
+				if($null -eq $pcHotFixes)
 				{
 					$errorMsg = "KBs not installed: $hotFixes"
 					$actual = "Not Installed"
@@ -819,7 +974,7 @@ Function KBs
 
 				else
 				{	
-					$HotfixesNotInstalled = $hotFixes | Where { $_ -notin $pcHotFixes }
+					$HotfixesNotInstalled = $hotFixes | Where-Object { $_ -notin $pcHotFixes }
 		
 					if($HotfixesNotInstalled.Count -gt 0)
 					{			
@@ -863,7 +1018,7 @@ Function ServerInDomain
 		Write-LogMessage -Type Verbose -Msg "Starting ServerInDomain..."
 		$result = $false
     
-		if ((gwmi win32_computersystem).partofdomain) 
+		if ((Get-WmiObject win32_computersystem).partofdomain) 
 		{
 			  $actual = "In Domain"
 			  $result = $true
@@ -950,8 +1105,8 @@ Function PendingRestart
 		$actual = ""
 		$result = $false
 
-		$regComponentBasedServicing = (dir 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\' | where { $_.Name -contains "RebootPending" })
-		$regWindowsUpdate = (dir 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\' | where { $_.Name -contains "RebootRequired" })
+		$regComponentBasedServicing = (Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Component Based Servicing\' | Where-Object { $_.Name -contains "RebootPending" })
+		$regWindowsUpdate = (Get-ChildItem 'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\WindowsUpdate\Auto Update\' | Where-Object { $_.Name -contains "RebootRequired" })
 		$regSessionManager = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\PendingFileRenameOperations' -ErrorAction Ignore)
 		$wmiClientUtilities = (Invoke-WmiMethod -Namespace "Root\CCM\ClientSDK" -Class CCM_ClientUtilities -Name DetermineIfRebootPending -ErrorAction Ignore).RebootPending
 		
@@ -1053,38 +1208,42 @@ Function GPO
 		gpresult /f /x $path *> $null
 
 		[xml]$xml = Get-Content $path
-
-		if($arrGPO.Count -gt 0)
+		$RDSGPOs = $xml.Rsop.ComputerResults.ExtensionData.extension.policy | Where-Object { $_.Category -match "Windows Components" }
+		if($RDSGPOs.Count -gt 0)
 		{
-			ForEach ($gpo in $arrGPO)
+			ForEach($item in $RDSGPOs)
 			{
-				$errorMsg = ""
-				$GPOValueResult = ReadGPOValue -gpoXML $xml -gpoName $gpo.Name 
-
-				if ([string]::IsNullOrEmpty($GPOValueResult))
+				$skip = $false
+				$name = "GPO: $($item.Name)"
+				$errorMsg = ""	
+				# Check if GPO exists in the critical GPO items
+				If($arrGPO -match $item.name)
 				{
-					$actual = "Not Configured"
-					$gpoResult = $true
-				}
-				else
-				{
-					$actual = $GPOValueResult
-
-					$gpoResult = ($gpo.Expected -eq $GPOValueResult)
-					
+					$expected = $($arrGPO -match $item.name).Expected
+					$gpoResult = ($Expected -eq $($item.state))
 					if(-not $gpoResult )
 					{
 						$compatible = $false
-						$errorMsg = "Expected:"+$gpo.Expected+" Actual:"+$actual
+						$errorMsg = "Expected:"+$Expected+" Actual:"+$($item.state)
 					}
 				}
-			
-				$name = "GPO: "+$gpo.Name
-				Write-LogMessage -Type Verbose -Msg ("{0}; Expected: {1}; Actual: {2}" -f $name, $gpo.Expected, $actual)
-				$reportObj = @{expected = $gpo.Expected; actual = $actual; errorMsg = $errorMsg; result = $gpoResult;}
-				#AddLineToReport $name $reportObj #TODO: Check this method
-				AddLineToTable $name $reportObj
-			}#loop end
+				# Check if GPO exists in RDS area
+				elseif($item.Category -match "Remote Desktop Services")
+				{
+					$expected = $false
+					$compatible = $false
+					$errorMsg = "Expected:'Not Configured' Actual:"+$($item.state)
+				}
+				else {
+					$skip = $true
+				}
+				if(!$skip)
+				{
+					Write-LogMessage -Type Verbose -Msg ("{0}; Expected: {1}; Actual: {2}" -f $name, $Expected, $item.state)
+					$reportObj = @{expected = $expected; actual = $($item.state); errorMsg = $errorMsg; result = $gpoResult;}
+					AddLineToTable $name $reportObj
+				}
+			}		
 		}
 
 		$errorMsg = $g_SKIP
@@ -1152,7 +1311,7 @@ Function ConsoleNETConnectivity
 }
 
 # @FUNCTION@ ======================================================================================================================
-# Name...........: ConsoleNETConnectivity
+# Name...........: ConsoleHTTPConnectivity
 # Description....: Tests Privilege Cloud network connectivity on port 443
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
@@ -1169,12 +1328,12 @@ Function ConsoleHTTPConnectivity
 		
 		$CustomerGenericGET = 0
 		Try{
-			$connectorConfigURL = "https://$g_ConsoleIP/connectorConfig/v1?customerId=35741f0e-71fe-4c1a-97c8-28594bf1281d&configItem=environmentFQDN"
+			$connectorConfigURL = "https://$g_ConsoleIP/connectorConfig/v1?customerId=94e9f371-6a95-4755-9128-5c5e2022cef3&configItem=environmentFQDN"
 			$CustomerGenericGET = Invoke-RestMethod -Uri $connectorConfigURL -TimeoutSec 20 -ContentType 'application/json'
 			If($null -ne $CustomerGenericGET)
 			{
 				$actual = $CustomerGenericGET.config.environmentFQDN.attributes.environmentFQDN.Length
-				$result = ($actual -eq 39)
+				$result = ($actual -eq 40)
 			}
 		} catch {
 			if ($_.Exception.Message -eq "Unable to connect to the remote server")
@@ -1199,7 +1358,49 @@ Function ConsoleHTTPConnectivity
 	}
 		
 	return [PsCustomObject]@{
-		expected = "39";
+		expected = "40";
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: ConsoleHTTPConnectivity
+# Description....: Tests Privilege Cloud network connectivity on port 443
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+Function SecureTunnelLocalPort
+{
+	[OutputType([PsCustomObject])]
+	param ()
+	try{
+		Write-LogMessage -Type Verbose -Msg "Starting SecureTunnelLocalPort..."
+		$actual = ""
+		$result = $false
+		$errorMsg = ""
+		
+		$lclPort = Get-NetTCPConnection | Where-Object {$_.LocalPort -eq 50000 -or $_.LocalPort -eq 50001}
+		if ($null -eq $lclPort)
+		{
+			  $actual = "Empty"
+			  $result = $True
+		} 
+		else 
+		{
+			  $actual = (get-process -Id ($lclport).OwningProcess).ProcessName
+			  $result = $false
+			  $errorMsg = "LocalPort 50000/50001 is taken by --> " + (get-process -Id ($lclport).OwningProcess).ProcessName + " <-- This port is needed for SecureTunnel functionality, if you're not going to install it you can disregard this error, otherwise we suggest checking what process is using it"
+		}
+
+		Write-LogMessage -Type Verbose -Msg "Finished SecureTunnelLocalPort"
+	} catch {
+		$errorMsg = "Could not check LocalPorts. Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+	
+	return [PsCustomObject]@{
+		expected = $True;
 		actual = $actual;
 		errorMsg = $errorMsg;
 		result = $result;
@@ -1225,8 +1426,8 @@ Function CRLConnectivity
 		$cert1 = 0
 		$cert2 = 0
 		Try{
-			$cert1 = Invoke-WebRequest -Uri http://crl3.digicert.com/CloudFlareIncECCCA2.crl -TimeoutSec 6 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -UseBasicParsing  | select -ExpandProperty StatusCode
-			$cert2 = Invoke-WebRequest -Uri http://crl4.digicert.com/CloudFlareIncECCCA2.crl -TimeoutSec 6 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -UseBasicParsing | select -ExpandProperty StatusCode
+			$cert1 = Invoke-WebRequest -Uri http://crl3.digicert.com/CloudFlareIncECCCA2.crl -TimeoutSec 6 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -UseBasicParsing  | Select-Object -ExpandProperty StatusCode
+			$cert2 = Invoke-WebRequest -Uri http://crl4.digicert.com/CloudFlareIncECCCA2.crl -TimeoutSec 6 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -UseBasicParsing | Select-Object -ExpandProperty StatusCode
 
 			If(($cert1 -eq 200) -and ($cert2 -eq 200))
 			{
@@ -1396,7 +1597,7 @@ Function SQLServerPermissions
 		{
 			Write-LogMessage -Type Verbose -Msg "Checking $sec group policy for Local Administrators access"
 			$administrators = Select-String $path -Pattern $sec
-			if($administrators -eq $null)
+			if($null -eq $administrators)
 			{
 				Write-LogMessage -Type Verbose -Msg "No Local Administrators access for $sec group policy"
 				$actual = $result = $False
@@ -1434,44 +1635,6 @@ Function SQLServerPermissions
 	}
 }
 
-# @FUNCTION@ ======================================================================================================================
-# Name...........: NotAzureADJoinedOn2019
-# Description....: Checks if the server is joined to Azure Domain and on Win2019 (known bug)
-# Parameters.....: None
-# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
-# =================================================================================================================================
-Function NotAzureADJoinedOn2019
-{
-	[OutputType([PsCustomObject])]
-	param ()
-	try{
-		$actual = $False
-		$result = $False
-		$errorMsg = ""
-		Write-LogMessage -Type Verbose -Msg "Starting NotAzureADJoinedOn2019..."
-		$CheckIfMachineIsOnAzure = ((((dsregcmd /status) -match "AzureAdJoined" | Out-String).Split(":") | Select-Object -Skip 1) -match "YES")
-		$Machine2019 = (Get-WmiObject Win32_OperatingSystem).caption -like '*2019*'
-
-		if ($CheckIfMachineIsOnAzure -and $Machine2019){
-			$errorMsg = "Known PSM Bug on Azure AD machine on 2019, consult services (Bug ID:14936)"
-		}
-		Else{
-			$actual = $True
-			$result = $True
-		}
-		
-		Write-LogMessage -Type Verbose -Msg "Finished NotAzureADJoinedOn2019"
-	} catch {
-		$errorMsg = "Could not check if server is joined to Azure Domain. Error: $(Collect-ExceptionMessage $_.Exception)"
-	}
-		
-	return [PsCustomObject]@{
-		expected = $True;
-		actual = $actual;
-		errorMsg = $errorMsg;
-		result = $result;
-	}
-}
 #endregion
 
 #region Helper functions
@@ -1495,7 +1658,7 @@ Function Test-NetConnectivity
 		try{
 			If(Get-Command Test-NetConnection -ErrorAction Ignore)
 			{
-				$retNetTest = Test-NetConnection -ComputerName $ComputerName -Port $Port -WarningVariable retWarning | select -ExpandProperty "TcpTestSucceeded"
+				$retNetTest = Test-NetConnection -ComputerName $ComputerName -Port $Port -WarningVariable retWarning | Select-Object -ExpandProperty "TcpTestSucceeded"
 				If($retWarning -like "*TCP connect to* failed" -or $retWarning -like "*Name resolution of*")
 				{
 					$errorMsg = "Network connectivity failed, check FW rules to '$ComputerName' on port '$Port' are allowed"
@@ -1579,7 +1742,7 @@ Function GetPublicIP()
 	$PublicIP = ""
 
 	try{
-		Write-LogMessage -Type Info -Msg "Attempting to retrieve Public IP, this can take up to 15 secs."
+		Write-LogMessage -Type Info -Msg "Attempting to retrieve Public IP..."
 		$PublicIP = (Invoke-WebRequest -Uri ipinfo.io/ip -UseBasicParsing -TimeoutSec 5).Content
 		$PublicIP | Out-File "$($env:COMPUTERNAME) PublicIP.txt"
 		Write-LogMessage -Type Success -Msg "Successfully fetched Public IP: $PublicIP and saved it in a local file '$($env:COMPUTERNAME) PublicIP.txt'"
@@ -1591,71 +1754,44 @@ Function GetPublicIP()
 }
 
 # @FUNCTION@ ======================================================================================================================
-# Name...........: ReadGPOValue
-# Description....: Returns the input GPO name state
-# Parameters.....: GPO XML file (as XML), GPO Name to check
-# Return Values..: String, GPO State
+# Name...........: ParamterSets
+# Description....: Stores variable for all user input fields
+# Parameters.....: VaultIP, TunnelIP, PortalURL
+# Return Values..: True/False
 # =================================================================================================================================
-Function ReadGPOValue
+Function ParamterSets()
 {
-	param(
-		[XML]$gpoXML,
-		[String]$gpoName
-	)
-	
-	$PolicyName = ""
-	$PolicyState = ""
-	$PolicyIdentifier = ""
-	$PolicyValue = ""
-	
-	Write-LogMessage -Type Verbose -Msg "Checking '$gpoName' in GPO report..."
-	
-    $extentionsDataNum = $gpoXML.Rsop.ComputerResults.ExtensionData.Count
-	# Search for the gpo in the Extension Data section
-	for ($extentionData = 0; $extentionData -lt $extentionsDataNum; $extentionData++)
-	{
-		$PoliciesNumber =  $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy.Count
-
-        if ($PoliciesNumber -eq $null)
-        {
-           $PolicyName = $gpoXML.Rsop.ComputerResults.ExtensionData.Extension.Policy.Name
-
-           if ($PolicyName -eq $gpoName)
-			{
-				$PolicyState = $gpoXML.Rsop.ComputerResults.ExtensionData.Extension.Policy.State 
-				$PolicyIdentifier = $gpoXML.Rsop.ComputerResults.ExtensionData.Extension.Policy.gpo.Identifier.'#text'
-
-				if ($gpoXML.Rsop.ComputerResults.ExtensionData.Extension.Policy.value.Name)
-				{
-					$PolicyValue = $gpoXML.Rsop.ComputerResults.ExtensionData.Extension.Policy.value.Name
-				}
-				# Exit For
-				break
-			}
-        } else {
-			for ($node = 0 ; $node -lt $PoliciesNumber; $node++)
-			{
-				$PolicyName = $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].Name
-
-				if ($PolicyName -eq $gpoName)
-				{
-					$PolicyState = $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].State 
-					$PolicyIdentifier = $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].gpo.Identifier.'#text'
-
-					if ($gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].value.Name)
-					{
-						$PolicyValue = $gpoXML.Rsop.ComputerResults.ExtensionData[$extentionData].Extension.Policy[$node].value.Name
-					}
-
-					# Exit For
-					break
-				}
-			}
+[CmdletBinding(DefaultParameterSetName="Regular")]
+param
+(
+	# Get the Vault IP
+	[Parameter(ParameterSetName='Regular',Mandatory=$true)]
+	[AllowEmptyString()]
+	[Alias("VaultIP")]
+	[String]${Please enter your Vault IP Address (Or leave empty)},
+	# Get the Tunnel IP
+	[Parameter(ParameterSetName='Regular',Mandatory=$true)]
+	[AllowEmptyString()]
+	[Alias("TunnelIP")]
+	[String]${Please enter your Tunnel Connector IP Address (Or leave empty)},
+	# Get the Portal URL
+	[Parameter(ParameterSetName='Regular',Mandatory=$true, HelpMessage="Example: https://<customerDomain>.privilegecloud.cyberark.com")]
+	[AllowEmptyString()]
+	[Alias("PortalURL")]
+	[ValidateScript({
+		If(![string]::IsNullOrEmpty($_)) {
+			$_ -like "*.privilegecloud.cyberark.com*"
 		}
-	}
-	Write-LogMessage -Type Verbose -Msg ("Policy Name {0} is in state {1} with current value {2}" -f $PolicyName, $PolicyState, $PolicyValue)
-    return $PolicyState
-}
+		Else { $true }
+	})]
+	[String]${Please enter your provided portal URL Address (Or leave empty)}
+    
+ )
+ # ------ Copy parameter values entered ------
+$global:VaultIP = ${Please enter your Vault IP Address (Or leave empty)}
+$global:TunnelIP = ${Please enter your Tunnel Connector IP Address (Or leave empty)}
+$global:PortalURL = ${Please enter your provided portal URL Address (Or leave empty)}#Example: https://<customerDomain>.privilegecloud.cyberark.com
+ }
 
 Function AddLineToTable($action, $resultObject)
 {
@@ -1836,9 +1972,43 @@ Function Test-VersionUpdate()
 	Write-LogMessage -Type Info -Msg "Current version is: $versionNumber"
 	Write-LogMessage -Type Info -Msg "Checking for new version"
 	$checkVersion = ""
-	$checkVersionOK = ""
 	$webVersion = New-Object System.Net.WebClient
 
+#Ignore certificate error
+if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationCallback').Type)
+    {
+		$certCallback = @"
+			using System;
+			using System.Net;
+			using System.Net.Security;
+			using System.Security.Cryptography.X509Certificates;
+			public class ServerCertificateValidationCallback
+			{
+				public static void Ignore()
+				{
+					if(ServicePointManager.ServerCertificateValidationCallback ==null)
+					{
+						ServicePointManager.ServerCertificateValidationCallback += 
+							delegate
+							(
+								Object obj, 
+								X509Certificate certificate, 
+								X509Chain chain, 
+								SslPolicyErrors errors
+							)
+							{
+								return true;
+							};
+					}
+				}
+			}
+"@
+			Add-Type $certCallback
+	}
+	[ServerCertificateValidationCallback]::Ignore()
+    #ERROR: The request was aborted: Could not create SSL/TLS secure channel.
+    [System.Net.ServicePointManager]::SecurityProtocol = [System.Net.SecurityProtocolType]::Tls12
+    
 	Try
 	{
 		$resWebCall = (Invoke-WebRequest -UseBasicParsing -Uri $pCloudLatest -ErrorAction Stop)
@@ -1867,11 +2037,12 @@ Function Test-VersionUpdate()
 		If (Test-Path -Path "$PSCommandPath.NEW")
 		{
 			Rename-Item -path $PSCommandPath -NewName "$PSCommandPath.OLD"
-			Rename-Item -Path "$PSCommandPath.NEW" -NewName "PSMCheckPrerequisites_PrivilegeCloud.ps1"
+			Rename-Item -Path "$PSCommandPath.NEW" -NewName $g_ScriptName
 			Remove-Item -Path "$PSCommandPath.OLD"
-			Write-LogMessage -Type Info -Msg "Finished Updating, please close window (Regular or ISE) and relaunch script"
+            $scriptPathAndArgs = "& `"$g_ScriptName`" -POC:$POC -OutOfDomain:$OutOfDomain -Troubleshooting:$Troubleshooting"
+			Write-LogMessage -Type Info -Msg "Finished Updating, please close window (Regular or ISE) and relaunch script."
 			Pause
-			return
+			Exit
 		}
 		Else
 		{
@@ -2086,10 +2257,16 @@ else
 	Write-LogMessage -Type Verbose -Msg "User is a local Admin!"
 	try {
 		Write-LogMessage -Type Info -Msg "Checking for latest version"
-		Test-VersionUpdate								# Check the latest version
+		Test-VersionUpdate	# Check the latest version
 	} catch {
 		Write-LogMessage -Type Error -Msg "Failed to check for latest version - Skipping. Error: $(Collect-ExceptionMessage $_.Exception)"
 	}
+    try {
+        Write-LogMessage -type Info -MSG "Prompting user for input"
+        ParamterSets #Prompt for user input
+    } catch {
+        Write-LogMessage -type Error -MSG "Failed to Prompt user for input - Skipping. Error: $(Collect-ExceptionMessage $_.Exception)"
+    }    
 	try {
 		Write-LogMessage -Type Verbose -Msg $(GetPublicIP)# Retrieve public IP and save it locally
 	} catch {
@@ -2107,10 +2284,10 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 ###########################################################################################	
 #endregion
 # SIG # Begin signature block
-# MIIfdQYJKoZIhvcNAQcCoIIfZjCCH2ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIIfdgYJKoZIhvcNAQcCoIIfZzCCH2MCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCA1aBmAjLQB6ZyE
-# 8Jqb/BjJTHi401PpuQqLeUDc6sw3iKCCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCamTQ25Z+aF857
+# TMXf8bH0q4pUVNt5XsK+dZEFFPj+c6CCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
 # NStkZdZqMA0GCSqGSIb3DQEBCwUAMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBH
 # bG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9i
 # YWxTaWduIFJvb3QgQ0EwHhcNMTgwOTE5MDAwMDAwWhcNMjgwMTI4MTIwMDAwWjBM
@@ -2187,92 +2364,92 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # rIzKAipex1J61Mf44/6Y6gOMGHW7jk84QxMSEbYIglfkHu+RhH8mhYRGKGgHOX3R
 # ViIoIxthvlG08/nTux3zeVnSAmXB5Z8KJ+FTzLyZhFii2i2TLAt/a95dMOb4YquH
 # qK9lmeFCLovYNIAihC7NHBruSGkt/sguM/17JWPpgHpjJxrIZH3dVH41LNPb3Bz2
-# KDHmv37ZRpQvuxAyctrTAPA6HJtuEJnIo6DhFR9LfTGCEFYwghBSAgEBMH4wbjEL
+# KDHmv37ZRpQvuxAyctrTAPA6HJtuEJnIo6DhFR9LfTGCEFcwghBTAgEBMH4wbjEL
 # MAkGA1UEBhMCQkUxGTAXBgNVBAoTEEdsb2JhbFNpZ24gbnYtc2ExRDBCBgNVBAMT
 # O0dsb2JhbFNpZ24gRXh0ZW5kZWQgVmFsaWRhdGlvbiBDb2RlU2lnbmluZyBDQSAt
 # IFNIQTI1NiAtIEczAgwhXYQh+9kPSKH6QS4wDQYJYIZIAWUDBAIBBQCgfDAQBgor
 # BgEEAYI3AgEMMQIwADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEE
-# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgprAtM7ybVfFr
-# nsPmk+4jPawk8lPvyJ7oRmGv4r39qjowDQYJKoZIhvcNAQEBBQAEggEAa8+epwwI
-# BlntJAHgbf44L+BUCE7WdnboASlP+Fn9j77gXMnkhH2/EV0SStX93ymjjSrJmNWd
-# SqcTkgPUPJuhUhn/5/v/UzrDAVBLzZH6D2Q+uh/wSAJc+Zg1zLQyLny2+Iw8Dyoh
-# yk85V1iGYy2PatlhG7Zj2QHL9PsHDJ+Ax5djd/Tb+PLqglqMJ6XWwkPAeUZMbxJB
-# cR1pvSjeIqW44aqsVyBmbacPZdt3fYFVlC/qX/5fWxlAPUmcezAyso/xu+HrViO6
-# 27P4hGTkKEWv0R5gawAk/4nVwARsAvCcLXbgo5Tez362a93GHbGX4mEaKg8yWvwt
-# jrhG3m9Uo5GTg6GCDiswgg4nBgorBgEEAYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEH
-# AqCCDgQwgg4AAgEDMQ0wCwYJYIZIAWUDBAIBMIH+BgsqhkiG9w0BCRABBKCB7gSB
-# 6zCB6AIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBRWsiNyJvQt9CHya0hB
-# gxrr2A81cgIUKcFNeF2dGSOBYWMxNteMZMrG6kMYDzIwMjAwOTA5MTAxODM5WjAD
-# AgEeoIGGpIGDMIGAMQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29y
-# cG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNV
-# BAMTKFN5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzOgggqL
-# MIIFODCCBCCgAwIBAgIQewWx1EloUUT3yYnSnBmdEjANBgkqhkiG9w0BAQsFADCB
-# vTELMAkGA1UEBhMCVVMxFzAVBgNVBAoTDlZlcmlTaWduLCBJbmMuMR8wHQYDVQQL
-# ExZWZXJpU2lnbiBUcnVzdCBOZXR3b3JrMTowOAYDVQQLEzEoYykgMjAwOCBWZXJp
-# U2lnbiwgSW5jLiAtIEZvciBhdXRob3JpemVkIHVzZSBvbmx5MTgwNgYDVQQDEy9W
-# ZXJpU2lnbiBVbml2ZXJzYWwgUm9vdCBDZXJ0aWZpY2F0aW9uIEF1dGhvcml0eTAe
-# Fw0xNjAxMTIwMDAwMDBaFw0zMTAxMTEyMzU5NTlaMHcxCzAJBgNVBAYTAlVTMR0w
-# GwYDVQQKExRTeW1hbnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UECxMWU3ltYW50ZWMg
-# VHJ1c3QgTmV0d29yazEoMCYGA1UEAxMfU3ltYW50ZWMgU0hBMjU2IFRpbWVTdGFt
-# cGluZyBDQTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALtZnVlVT52M
-# cl0agaLrVfOwAa08cawyjwVrhponADKXak3JZBRLKbvC2Sm5Luxjs+HPPwtWkPhi
-# G37rpgfi3n9ebUA41JEG50F8eRzLy60bv9iVkfPw7mz4rZY5Ln/BJ7h4OcWEpe3t
-# r4eOzo3HberSmLU6Hx45ncP0mqj0hOHE0XxxxgYptD/kgw0mw3sIPk35CrczSf/K
-# O9T1sptL4YiZGvXA6TMU1t/HgNuR7v68kldyd/TNqMz+CfWTN76ViGrF3PSxS9TO
-# 6AmRX7WEeTWKeKwZMo8jwTJBG1kOqT6xzPnWK++32OTVHW0ROpL2k8mc40juu1MO
-# 1DaXhnjFoTcCAwEAAaOCAXcwggFzMA4GA1UdDwEB/wQEAwIBBjASBgNVHRMBAf8E
-# CDAGAQH/AgEAMGYGA1UdIARfMF0wWwYLYIZIAYb4RQEHFwMwTDAjBggrBgEFBQcC
-# ARYXaHR0cHM6Ly9kLnN5bWNiLmNvbS9jcHMwJQYIKwYBBQUHAgIwGRoXaHR0cHM6
-# Ly9kLnN5bWNiLmNvbS9ycGEwLgYIKwYBBQUHAQEEIjAgMB4GCCsGAQUFBzABhhJo
-# dHRwOi8vcy5zeW1jZC5jb20wNgYDVR0fBC8wLTAroCmgJ4YlaHR0cDovL3Muc3lt
-# Y2IuY29tL3VuaXZlcnNhbC1yb290LmNybDATBgNVHSUEDDAKBggrBgEFBQcDCDAo
-# BgNVHREEITAfpB0wGzEZMBcGA1UEAxMQVGltZVN0YW1wLTIwNDgtMzAdBgNVHQ4E
-# FgQUr2PWyqNOhXLgp7xB8ymiOH+AdWIwHwYDVR0jBBgwFoAUtnf6aUhHn1MS1cLq
-# BzJ2B9GXBxkwDQYJKoZIhvcNAQELBQADggEBAHXqsC3VNBlcMkX+DuHUT6Z4wW/X
-# 6t3cT/OhyIGI96ePFeZAKa3mXfSi2VZkhHEwKt0eYRdmIFYGmBmNXXHy+Je8Cf0c
-# kUfJ4uiNA/vMkC/WCmxOM+zWtJPITJBjSDlAIcTd1m6JmDy1mJfoqQa3CcmPU1dB
-# kC/hHk1O3MoQeGxCbvC2xfhhXFL1TvZrjfdKer7zzf0D19n2A6gP41P3CnXsxnUu
-# qmaFBJm3+AZX4cYO9uiv2uybGB+queM6AL/OipTLAduexzi7D1Kr0eOUA2AKTaD+
-# J20UMvw/l0Dhv5mJ2+Q5FL3a5NPD6itas5VYVQR9x5rsIwONhSrS/66pYYEwggVL
-# MIIEM6ADAgECAhB71OWvuswHP6EBIwQiQU0SMA0GCSqGSIb3DQEBCwUAMHcxCzAJ
-# BgNVBAYTAlVTMR0wGwYDVQQKExRTeW1hbnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UE
-# CxMWU3ltYW50ZWMgVHJ1c3QgTmV0d29yazEoMCYGA1UEAxMfU3ltYW50ZWMgU0hB
-# MjU2IFRpbWVTdGFtcGluZyBDQTAeFw0xNzEyMjMwMDAwMDBaFw0yOTAzMjIyMzU5
-# NTlaMIGAMQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRp
-# b24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5
-# bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzMwggEiMA0GCSqG
-# SIb3DQEBAQUAA4IBDwAwggEKAoIBAQCvDoqq+Ny/aXtUF3FHCb2NPIH4dBV3Z5Cc
-# /d5OAp5LdvblNj5l1SQgbTD53R2D6T8nSjNObRaK5I1AjSKqvqcLG9IHtjy1GiQo
-# +BtyUT3ICYgmCDr5+kMjdUdwDLNfW48IHXJIV2VNrwI8QPf03TI4kz/lLKbzWSPL
-# gN4TTfkQyaoKGGxVYVfR8QIsxLWr8mwj0p8NDxlsrYViaf1OhcGKUjGrW9jJdFLj
-# V2wiv1V/b8oGqz9KtyJ2ZezsNvKWlYEmLP27mKoBONOvJUCbCVPwKVeFWF7qhUhB
-# IYfl3rTTJrJ7QFNYeY5SMQZNlANFxM48A+y3API6IsW0b+XvsIqbAgMBAAGjggHH
-# MIIBwzAMBgNVHRMBAf8EAjAAMGYGA1UdIARfMF0wWwYLYIZIAYb4RQEHFwMwTDAj
-# BggrBgEFBQcCARYXaHR0cHM6Ly9kLnN5bWNiLmNvbS9jcHMwJQYIKwYBBQUHAgIw
-# GRoXaHR0cHM6Ly9kLnN5bWNiLmNvbS9ycGEwQAYDVR0fBDkwNzA1oDOgMYYvaHR0
-# cDovL3RzLWNybC53cy5zeW1hbnRlYy5jb20vc2hhMjU2LXRzcy1jYS5jcmwwFgYD
-# VR0lAQH/BAwwCgYIKwYBBQUHAwgwDgYDVR0PAQH/BAQDAgeAMHcGCCsGAQUFBwEB
-# BGswaTAqBggrBgEFBQcwAYYeaHR0cDovL3RzLW9jc3Aud3Muc3ltYW50ZWMuY29t
-# MDsGCCsGAQUFBzAChi9odHRwOi8vdHMtYWlhLndzLnN5bWFudGVjLmNvbS9zaGEy
-# NTYtdHNzLWNhLmNlcjAoBgNVHREEITAfpB0wGzEZMBcGA1UEAxMQVGltZVN0YW1w
-# LTIwNDgtNjAdBgNVHQ4EFgQUpRMBqZ+FzBtuFh5fOzGqeTYAex0wHwYDVR0jBBgw
-# FoAUr2PWyqNOhXLgp7xB8ymiOH+AdWIwDQYJKoZIhvcNAQELBQADggEBAEaer/C4
-# ol+imUjPqCdLIc2yuaZycGMv41UpezlGTud+ZQZYi7xXipINCNgQujYk+gp7+zvT
-# Yr9KlBXmgtuKVG3/KP5nz3E/5jMJ2aJZEPQeSv5lzN7Ua+NSKXUASiulzMub6KlN
-# 97QXWZJBw7c/hub2wH9EPEZcF1rjpDvVaSbVIX3hgGd+Yqy3Ti4VmuWcI69bEepx
-# qUH5DXk4qaENz7Sx2j6aescixXTN30cJhsT8kSWyG5bphQjo3ep0YG5gpVZ6DchE
-# WNzm+UgUnuW/3gC9d7GYFHIUJN/HESwfAD/DSxTGZxzMHgajkF9cVIs+4zNbgg/F
-# t4YCTnGf6WZFP3YxggJaMIICVgIBATCBizB3MQswCQYDVQQGEwJVUzEdMBsGA1UE
-# ChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0
-# IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcg
-# Q0ECEHvU5a+6zAc/oQEjBCJBTRIwCwYJYIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJ
-# AzENBgsqhkiG9w0BCRABBDAcBgkqhkiG9w0BCQUxDxcNMjAwOTA5MTAxODM5WjAv
-# BgkqhkiG9w0BCQQxIgQgsiYwZdlEsBiF2xPVWKwjeaXXgQXehmLAFtEVH3i1omkw
-# NwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQgxHTOdgB9AjlODaXk3nwUxoD54oIBPP72
-# U+9dtx/fYfgwCwYJKoZIhvcNAQEBBIIBAIRn4h8sx0O/hSOGTRdZP5h0yruTVF8P
-# upNWPQxTG74AGmmqop9hKAoI5Jb7E1L9+UjOIZSS25HiYAqEYZ/QtlU4flypdo/n
-# Qm5gbQfY2ZiaGdoj6ks3UKJO1RqA0DlWtpd9FJT+BRQqw98HzlL5mW/aV3TSyh7K
-# H7XnHBghTWs04JsI1TSMhxcFvAxhws5w4TbdXouG8EGbAgd6HS3kfzPY11PEwuk4
-# VTySQjP1mHVrDpeFfxdhAnimfZaj3mnVNPUlTlZ1/n+n1XpZZPKWwTLTVfPm1hLB
-# jSK+cDnJ2JbAPRDwII/UwOVlZGuWjBiQSkGm9oljGEHka7is7VsH+X8=
+# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgT3gFnHoap7DX
+# ah+81A2HL4KSxF6zUisu047xkMIwi4swDQYJKoZIhvcNAQEBBQAEggEANDkMs09O
+# 78AYMKXJDFaP9x/zZ5KnT0L5x2CFzFPJjo8HYfv2oIwmGlxYg5GPx8SUeoCZx6CW
+# UoVT4DzX2ZHE5mS7GWwOuCFxvaRB2JSG2+vctnY6CQ+mynvGywoPf0tsZiDmhvdA
+# 6ZEWo3DQkthoQbZDviWUu3xGkUdpVhbyT2waPGdsWcqByXpEtSIhyIPERGb78dJd
+# hA13Hl97LB8BuYqnXAzw6Ino3Fhv6SXxzifQBddP5xMD5b+uDwWpqHj06sQG4ytb
+# nazjustx0MeApzOfpRpSBu3M6qpeSFo4VWEv3Akt9QWlo6IL6opeAknIZ0CzDXsd
+# TlxTIZOWVcQbiqGCDiwwgg4oBgorBgEEAYI3AwMBMYIOGDCCDhQGCSqGSIb3DQEH
+# AqCCDgUwgg4BAgEDMQ0wCwYJYIZIAWUDBAIBMIH/BgsqhkiG9w0BCRABBKCB7wSB
+# 7DCB6QIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBSuLRirpBRL/4Yo2/Hi
+# gkj0ywR+hwIVAJLq8/M4yR8XTi8V5zNR7bWpoiD9GA8yMDIxMDIwNDEyNTUwOFow
+# AwIBHqCBhqSBgzCBgDELMAkGA1UEBhMCVVMxHTAbBgNVBAoTFFN5bWFudGVjIENv
+# cnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYD
+# VQQDEyhTeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIFNpZ25lciAtIEczoIIK
+# izCCBTgwggQgoAMCAQICEHsFsdRJaFFE98mJ0pwZnRIwDQYJKoZIhvcNAQELBQAw
+# gb0xCzAJBgNVBAYTAlVTMRcwFQYDVQQKEw5WZXJpU2lnbiwgSW5jLjEfMB0GA1UE
+# CxMWVmVyaVNpZ24gVHJ1c3QgTmV0d29yazE6MDgGA1UECxMxKGMpIDIwMDggVmVy
+# aVNpZ24sIEluYy4gLSBGb3IgYXV0aG9yaXplZCB1c2Ugb25seTE4MDYGA1UEAxMv
+# VmVyaVNpZ24gVW5pdmVyc2FsIFJvb3QgQ2VydGlmaWNhdGlvbiBBdXRob3JpdHkw
+# HhcNMTYwMTEyMDAwMDAwWhcNMzEwMTExMjM1OTU5WjB3MQswCQYDVQQGEwJVUzEd
+# MBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVj
+# IFRydXN0IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3Rh
+# bXBpbmcgQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC7WZ1ZVU+d
+# jHJdGoGi61XzsAGtPHGsMo8Fa4aaJwAyl2pNyWQUSym7wtkpuS7sY7Phzz8LVpD4
+# Yht+66YH4t5/Xm1AONSRBudBfHkcy8utG7/YlZHz8O5s+K2WOS5/wSe4eDnFhKXt
+# 7a+Hjs6Nx23q0pi1Oh8eOZ3D9Jqo9IThxNF8ccYGKbQ/5IMNJsN7CD5N+Qq3M0n/
+# yjvU9bKbS+GImRr1wOkzFNbfx4Dbke7+vJJXcnf0zajM/gn1kze+lYhqxdz0sUvU
+# zugJkV+1hHk1inisGTKPI8EyQRtZDqk+scz51ivvt9jk1R1tETqS9pPJnONI7rtT
+# DtQ2l4Z4xaE3AgMBAAGjggF3MIIBczAOBgNVHQ8BAf8EBAMCAQYwEgYDVR0TAQH/
+# BAgwBgEB/wIBADBmBgNVHSAEXzBdMFsGC2CGSAGG+EUBBxcDMEwwIwYIKwYBBQUH
+# AgEWF2h0dHBzOi8vZC5zeW1jYi5jb20vY3BzMCUGCCsGAQUFBwICMBkaF2h0dHBz
+# Oi8vZC5zeW1jYi5jb20vcnBhMC4GCCsGAQUFBwEBBCIwIDAeBggrBgEFBQcwAYYS
+# aHR0cDovL3Muc3ltY2QuY29tMDYGA1UdHwQvMC0wK6ApoCeGJWh0dHA6Ly9zLnN5
+# bWNiLmNvbS91bml2ZXJzYWwtcm9vdC5jcmwwEwYDVR0lBAwwCgYIKwYBBQUHAwgw
+# KAYDVR0RBCEwH6QdMBsxGTAXBgNVBAMTEFRpbWVTdGFtcC0yMDQ4LTMwHQYDVR0O
+# BBYEFK9j1sqjToVy4Ke8QfMpojh/gHViMB8GA1UdIwQYMBaAFLZ3+mlIR59TEtXC
+# 6gcydgfRlwcZMA0GCSqGSIb3DQEBCwUAA4IBAQB16rAt1TQZXDJF/g7h1E+meMFv
+# 1+rd3E/zociBiPenjxXmQCmt5l30otlWZIRxMCrdHmEXZiBWBpgZjV1x8viXvAn9
+# HJFHyeLojQP7zJAv1gpsTjPs1rSTyEyQY0g5QCHE3dZuiZg8tZiX6KkGtwnJj1NX
+# QZAv4R5NTtzKEHhsQm7wtsX4YVxS9U72a433Snq+8839A9fZ9gOoD+NT9wp17MZ1
+# LqpmhQSZt/gGV+HGDvbor9rsmxgfqrnjOgC/zoqUywHbnsc4uw9Sq9HjlANgCk2g
+# /idtFDL8P5dA4b+ZidvkORS92uTTw+orWrOVWFUEfcea7CMDjYUq0v+uqWGBMIIF
+# SzCCBDOgAwIBAgIQe9Tlr7rMBz+hASMEIkFNEjANBgkqhkiG9w0BAQsFADB3MQsw
+# CQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNV
+# BAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFudGVjIFNI
+# QTI1NiBUaW1lU3RhbXBpbmcgQ0EwHhcNMTcxMjIzMDAwMDAwWhcNMjkwMzIyMjM1
+# OTU5WjCBgDELMAkGA1UEBhMCVVMxHTAbBgNVBAoTFFN5bWFudGVjIENvcnBvcmF0
+# aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYDVQQDEyhT
+# eW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIFNpZ25lciAtIEczMIIBIjANBgkq
+# hkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArw6Kqvjcv2l7VBdxRwm9jTyB+HQVd2eQ
+# nP3eTgKeS3b25TY+ZdUkIG0w+d0dg+k/J0ozTm0WiuSNQI0iqr6nCxvSB7Y8tRok
+# KPgbclE9yAmIJgg6+fpDI3VHcAyzX1uPCB1ySFdlTa8CPED39N0yOJM/5Sym81kj
+# y4DeE035EMmqChhsVWFX0fECLMS1q/JsI9KfDQ8ZbK2FYmn9ToXBilIxq1vYyXRS
+# 41dsIr9Vf2/KBqs/SrcidmXs7DbylpWBJiz9u5iqATjTryVAmwlT8ClXhVhe6oVI
+# QSGH5d600yaye0BTWHmOUjEGTZQDRcTOPAPstwDyOiLFtG/l77CKmwIDAQABo4IB
+# xzCCAcMwDAYDVR0TAQH/BAIwADBmBgNVHSAEXzBdMFsGC2CGSAGG+EUBBxcDMEww
+# IwYIKwYBBQUHAgEWF2h0dHBzOi8vZC5zeW1jYi5jb20vY3BzMCUGCCsGAQUFBwIC
+# MBkaF2h0dHBzOi8vZC5zeW1jYi5jb20vcnBhMEAGA1UdHwQ5MDcwNaAzoDGGL2h0
+# dHA6Ly90cy1jcmwud3Muc3ltYW50ZWMuY29tL3NoYTI1Ni10c3MtY2EuY3JsMBYG
+# A1UdJQEB/wQMMAoGCCsGAQUFBwMIMA4GA1UdDwEB/wQEAwIHgDB3BggrBgEFBQcB
+# AQRrMGkwKgYIKwYBBQUHMAGGHmh0dHA6Ly90cy1vY3NwLndzLnN5bWFudGVjLmNv
+# bTA7BggrBgEFBQcwAoYvaHR0cDovL3RzLWFpYS53cy5zeW1hbnRlYy5jb20vc2hh
+# MjU2LXRzcy1jYS5jZXIwKAYDVR0RBCEwH6QdMBsxGTAXBgNVBAMTEFRpbWVTdGFt
+# cC0yMDQ4LTYwHQYDVR0OBBYEFKUTAamfhcwbbhYeXzsxqnk2AHsdMB8GA1UdIwQY
+# MBaAFK9j1sqjToVy4Ke8QfMpojh/gHViMA0GCSqGSIb3DQEBCwUAA4IBAQBGnq/w
+# uKJfoplIz6gnSyHNsrmmcnBjL+NVKXs5Rk7nfmUGWIu8V4qSDQjYELo2JPoKe/s7
+# 02K/SpQV5oLbilRt/yj+Z89xP+YzCdmiWRD0Hkr+Zcze1GvjUil1AEorpczLm+ip
+# Tfe0F1mSQcO3P4bm9sB/RDxGXBda46Q71Wkm1SF94YBnfmKst04uFZrlnCOvWxHq
+# calB+Q15OKmhDc+0sdo+mnrHIsV0zd9HCYbE/JElshuW6YUI6N3qdGBuYKVWeg3I
+# RFjc5vlIFJ7lv94AvXexmBRyFCTfxxEsHwA/w0sUxmcczB4Go5BfXFSLPuMzW4IP
+# xbeGAk5xn+lmRT92MYICWjCCAlYCAQEwgYswdzELMAkGA1UEBhMCVVMxHTAbBgNV
+# BAoTFFN5bWFudGVjIENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVz
+# dCBOZXR3b3JrMSgwJgYDVQQDEx9TeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5n
+# IENBAhB71OWvuswHP6EBIwQiQU0SMAsGCWCGSAFlAwQCAaCBpDAaBgkqhkiG9w0B
+# CQMxDQYLKoZIhvcNAQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTIxMDIwNDEyNTUwOFow
+# LwYJKoZIhvcNAQkEMSIEIJoo62XOSQJvgKTLQGCHstXU8SjdYP1XHMYNkl8kciAs
+# MDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIEIMR0znYAfQI5Tg2l5N58FMaA+eKCATz+
+# 9lPvXbcf32H4MAsGCSqGSIb3DQEBAQSCAQCuPMG427DDTr2Kq4e/uB7P/DNlKYeD
+# GCYjOTR7EcrlMvft16TiFnA86qXYVqgrD+IeNfz9/3JeYGE/1PBflk2gbvIIcfv6
+# azcxSOBv2s6H2yNO1x9TVoLwsFOg9UpvMcvE87nIReskGLsJJeUBDhcLBVPkwolJ
+# qqadEjbhj2PhHIggVhdbWIrmzihxmIT24gLpOGm6+Vw2Xma64o+PA2p6dLSwrdCE
+# jVryDTL/tngBgR22+gO6sEs+Heed6n+vX0NB3o8iRDxjigwOqZCuK1f8r7rUEW+2
+# irVqSEwdFs35divWuwbPAji5CHuhLzt4SVfa4TWeXv/xBT3d8+GFn3NW
 # SIG # End signature block
