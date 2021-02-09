@@ -112,12 +112,13 @@ $global:InDebug = $PSBoundParameters.Debug.IsPresent
 $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 
 # Script Version
-[int]$versionNumber = "18"
+[int]$versionNumber = "19"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
 $global:LOG_DATE = $(get-date -format yyyyMMdd) + "-" + $(get-date -format HHmmss)
 $global:LOG_FILE_PATH = "$ScriptLocation\PrivCloud-CheckPrerequisites-$LOG_DATE.log"
+$global:CONFIG_PARAMETERS_FILE = "$ScriptLocation\PSMCheckPrerequisites_PrivilegeCloud.ini"
 
 # ------ SET Global Parameters ------
 $global:g_ConsoleIP = "console.privilegecloud.cyberark.com"
@@ -1754,12 +1755,12 @@ Function GetPublicIP()
 }
 
 # @FUNCTION@ ======================================================================================================================
-# Name...........: ParamterSets
+# Name...........: Set-ScriptParameters
 # Description....: Stores variable for all user input fields
 # Parameters.....: VaultIP, TunnelIP, PortalURL
 # Return Values..: True/False
 # =================================================================================================================================
-Function ParamterSets()
+Function Set-ScriptParameters()
 {
 [CmdletBinding(DefaultParameterSetName="Regular")]
 param
@@ -1784,13 +1785,33 @@ param
 		}
 		Else { $true }
 	})]
-	[String]${Please enter your provided portal URL Address (Or leave empty)}
+	[String]${Please enter your provided portal URL Address (Or leave empty)},
+	# Config File
+	[Parameter(ParameterSetName='File',Mandatory=$true)]
+	[ValidateScript({Test-Path $_})]
+	[String]$ConfigFile
     
  )
- # ------ Copy parameter values entered ------
-$global:VaultIP = ${Please enter your Vault IP Address (Or leave empty)}
-$global:TunnelIP = ${Please enter your Tunnel Connector IP Address (Or leave empty)}
-$global:PortalURL = ${Please enter your provided portal URL Address (Or leave empty)}#Example: https://<customerDomain>.privilegecloud.cyberark.com
+	 If([string]::IsNullOrEmpty($ConfigFile))
+	 {
+		 # ------ Copy parameter values entered ------
+		$script:VaultIP = ${Please enter your Vault IP Address (Or leave empty)}
+		$script:TunnelIP = ${Please enter your Tunnel Connector IP Address (Or leave empty)}
+		$script:PortalURL = ${Please enter your provided portal URL Address (Or leave empty)}#Example: https://<customerDomain>.privilegecloud.cyberark.com	 
+		# Create the Config file for next use
+		$parameters = @{
+			PortalURL = $PortalURL
+			VaultIP = $VaultIP
+			TunnelIP = $TunnelIP
+		}
+		$parameters | Export-CliXML -Path $CONFIG_PARAMETERS_FILE -NoClobber -Encoding ASCII
+	 }
+	 else{
+		$parameters = Import-CliXML -Path $CONFIG_PARAMETERS_FILE
+		$script:VaultIP = $parameters.VaultIP
+		$script:TunnelIP = $parameters.TunnelIP
+		$script:PortalURL = $parameters.PortalURL
+	 }
  }
 
 Function AddLineToTable($action, $resultObject)
@@ -2262,8 +2283,16 @@ else
 		Write-LogMessage -Type Error -Msg "Failed to check for latest version - Skipping. Error: $(Collect-ExceptionMessage $_.Exception)"
 	}
     try {
-        Write-LogMessage -type Info -MSG "Prompting user for input"
-        ParamterSets #Prompt for user input
+		if(Test-Path $CONFIG_PARAMETERS_FILE)
+		{
+			Write-LogMessage -type Info -MSG "Getting parameters from config file '$CONFIG_PARAMETERS_FILE'"	
+			Set-ScriptParameters -ConfigFile $CONFIG_PARAMETERS_FILE
+		}
+		else
+		{
+			Write-LogMessage -type Info -MSG "Prompting user for input"
+			Set-ScriptParameters #Prompt for user input	
+		}
     } catch {
         Write-LogMessage -type Error -MSG "Failed to Prompt user for input - Skipping. Error: $(Collect-ExceptionMessage $_.Exception)"
     }    
@@ -2286,8 +2315,8 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # SIG # Begin signature block
 # MIIfdgYJKoZIhvcNAQcCoIIfZzCCH2MCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCamTQ25Z+aF857
-# TMXf8bH0q4pUVNt5XsK+dZEFFPj+c6CCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCDHuS2I/sfI8iA
+# s/wJAp+Nj2vVBisZU6/M0QV42AwNwqCCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
 # NStkZdZqMA0GCSqGSIb3DQEBCwUAMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBH
 # bG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9i
 # YWxTaWduIFJvb3QgQ0EwHhcNMTgwOTE5MDAwMDAwWhcNMjgwMTI4MTIwMDAwWjBM
@@ -2369,17 +2398,17 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # O0dsb2JhbFNpZ24gRXh0ZW5kZWQgVmFsaWRhdGlvbiBDb2RlU2lnbmluZyBDQSAt
 # IFNIQTI1NiAtIEczAgwhXYQh+9kPSKH6QS4wDQYJYIZIAWUDBAIBBQCgfDAQBgor
 # BgEEAYI3AgEMMQIwADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEE
-# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgT3gFnHoap7DX
-# ah+81A2HL4KSxF6zUisu047xkMIwi4swDQYJKoZIhvcNAQEBBQAEggEANDkMs09O
-# 78AYMKXJDFaP9x/zZ5KnT0L5x2CFzFPJjo8HYfv2oIwmGlxYg5GPx8SUeoCZx6CW
-# UoVT4DzX2ZHE5mS7GWwOuCFxvaRB2JSG2+vctnY6CQ+mynvGywoPf0tsZiDmhvdA
-# 6ZEWo3DQkthoQbZDviWUu3xGkUdpVhbyT2waPGdsWcqByXpEtSIhyIPERGb78dJd
-# hA13Hl97LB8BuYqnXAzw6Ino3Fhv6SXxzifQBddP5xMD5b+uDwWpqHj06sQG4ytb
-# nazjustx0MeApzOfpRpSBu3M6qpeSFo4VWEv3Akt9QWlo6IL6opeAknIZ0CzDXsd
-# TlxTIZOWVcQbiqGCDiwwgg4oBgorBgEEAYI3AwMBMYIOGDCCDhQGCSqGSIb3DQEH
+# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgtCOWzXZDebGx
+# ATCykgNBQoTGerfH/9LA3YCS3kbs3wUwDQYJKoZIhvcNAQEBBQAEggEAJDn7aP8D
+# nODHFMPjbA0t0wKK5FMXhx5efFVn1LVnlkTrdOTdr/Rx8UZ/03+xGiKJPgb+ST21
+# rchUKPQPKlNDImhZLEK6VeBD2uzmE2bICIIOqufeOmph7CjDAPSIWCD0l5rbDo6E
+# zvF3pOfH7I2upnPFqiDZrHMd8zjgnB7023UtBJ47O1YjaO5UN9maeOTqHIOH4o/T
+# B6d+sSKH5vFtfNhlAbeJpvIx3wCgaNgmuBzgtGXjWNE+atXaaJRIdGrX3B5+Pv3S
+# BIk4tG1rNUaIWGlw8AjXwhWsgglYigct/IXO8ji3Qy/0+1sUCek9+1DMj1ybsVUT
+# OqsKzI2C7Oxd+6GCDiwwgg4oBgorBgEEAYI3AwMBMYIOGDCCDhQGCSqGSIb3DQEH
 # AqCCDgUwgg4BAgEDMQ0wCwYJYIZIAWUDBAIBMIH/BgsqhkiG9w0BCRABBKCB7wSB
-# 7DCB6QIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBSuLRirpBRL/4Yo2/Hi
-# gkj0ywR+hwIVAJLq8/M4yR8XTi8V5zNR7bWpoiD9GA8yMDIxMDIwNDEyNTUwOFow
+# 7DCB6QIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBT332/1oLG+Fj5MTvte
+# CJfCK/7VUgIVANjRfiHcURBUAJp6m4HKJnRxe9XAGA8yMDIxMDIwOTA3NDkwNFow
 # AwIBHqCBhqSBgzCBgDELMAkGA1UEBhMCVVMxHTAbBgNVBAoTFFN5bWFudGVjIENv
 # cnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYD
 # VQQDEyhTeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIFNpZ25lciAtIEczoIIK
@@ -2443,13 +2472,13 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # BAoTFFN5bWFudGVjIENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVz
 # dCBOZXR3b3JrMSgwJgYDVQQDEx9TeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5n
 # IENBAhB71OWvuswHP6EBIwQiQU0SMAsGCWCGSAFlAwQCAaCBpDAaBgkqhkiG9w0B
-# CQMxDQYLKoZIhvcNAQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTIxMDIwNDEyNTUwOFow
-# LwYJKoZIhvcNAQkEMSIEIJoo62XOSQJvgKTLQGCHstXU8SjdYP1XHMYNkl8kciAs
+# CQMxDQYLKoZIhvcNAQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTIxMDIwOTA3NDkwNFow
+# LwYJKoZIhvcNAQkEMSIEIDjx9Vp9jqNy+5kMTyWkO3psKBiyvncX2FuOT58OaZ5Y
 # MDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIEIMR0znYAfQI5Tg2l5N58FMaA+eKCATz+
-# 9lPvXbcf32H4MAsGCSqGSIb3DQEBAQSCAQCuPMG427DDTr2Kq4e/uB7P/DNlKYeD
-# GCYjOTR7EcrlMvft16TiFnA86qXYVqgrD+IeNfz9/3JeYGE/1PBflk2gbvIIcfv6
-# azcxSOBv2s6H2yNO1x9TVoLwsFOg9UpvMcvE87nIReskGLsJJeUBDhcLBVPkwolJ
-# qqadEjbhj2PhHIggVhdbWIrmzihxmIT24gLpOGm6+Vw2Xma64o+PA2p6dLSwrdCE
-# jVryDTL/tngBgR22+gO6sEs+Heed6n+vX0NB3o8iRDxjigwOqZCuK1f8r7rUEW+2
-# irVqSEwdFs35divWuwbPAji5CHuhLzt4SVfa4TWeXv/xBT3d8+GFn3NW
+# 9lPvXbcf32H4MAsGCSqGSIb3DQEBAQSCAQCmOQlZfpnGr2lm7DGPsHhsI5SineX4
+# FGZze3i4bUTeQRmty9TP7VSVIupg0P5FEZa2Vk/u6TwSdDU3Btqre0UbKQM3MKSV
+# M+GI279d0QBgu8r9Ggucz1/nM3r8aSVEnu3SSpEbHeIxJsQP6ZXSwjD0EuZRgsUA
+# jmYSG6sWGHrV3geei1aLFjYxc0YV5TcBQZpYRoZN2e8mZQwXsMtQT3xQEgC2lpBf
+# Qp9zoL+pP6fb+8La1phSq2VKeRLphTZd2ErwxPA5SpdYiHHg5K/K2MuPMEiqqaFI
+# K0NChawit0qp86NZr5hBy7KMeCl6IZTfO3M15oaBaVpayn5Tix4lhsTa
 # SIG # End signature block
