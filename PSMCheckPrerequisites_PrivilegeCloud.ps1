@@ -1,4 +1,3 @@
-
 ###########################################################################
 #
 # NAME: Privilege Cloud Prerequisites check
@@ -71,7 +70,10 @@ $arrCheckPrerequisites = @(
 "UsersLoggedOn",
 "KBs",
 "IPV6",
+"SecondaryLogon",
+"KUsrInitDELL",
 "NetworkAdapter",
+"DotNet",
 "PSRemoting",
 "WinRM",
 "WinRMListener",
@@ -100,6 +102,8 @@ $arrGPO = @(
 	   [pscustomobject]@{Name='Use Remote Desktop Easy Print printer driver first'; Expected='Enabled'}
        [pscustomobject]@{Name='Allow CredSSP authentication'; Expected='Enabled'}
        [pscustomobject]@{Name='Allow remote server management through WinRM'; Expected='Enabled'}
+       [pscustomobject]@{Name='Prevent running First Run wizard'; Expected='Not Configured'}
+       [pscustomobject]@{Name='Allow Remote Shell Access'; Expected='Not Configured'}
    )
 
 
@@ -110,15 +114,16 @@ $ScriptLocation = Split-Path -Parent $MyInvocation.MyCommand.Path
 # Get Debug / Verbose parameters for Script
 $global:InDebug = $PSBoundParameters.Debug.IsPresent
 $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
+$global:PSMConfigFile = "PSMCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "19"
+[int]$versionNumber = "20"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
 $global:LOG_DATE = $(get-date -format yyyyMMdd) + "-" + $(get-date -format HHmmss)
 $global:LOG_FILE_PATH = "$ScriptLocation\PrivCloud-CheckPrerequisites-$LOG_DATE.log"
-$global:CONFIG_PARAMETERS_FILE = "$ScriptLocation\PSMCheckPrerequisites_PrivilegeCloud.ini"
+$global:CONFIG_PARAMETERS_FILE = "$ScriptLocation\$PSMConfigFile"
 
 # ------ SET Global Parameters ------
 $global:g_ConsoleIP = "console.privilegecloud.cyberark.com"
@@ -140,6 +145,7 @@ Function Show-Menu{
     Write-Host "4: Press '4' to Disable IPv6" -ForegroundColor Green
     Write-Host "5: Press '5' to Enable WinRM HTTPS Listener" -ForegroundColor Green
     Write-Host "6: Press '6' to Config WinRMListener Permissions" -ForegroundColor Green
+    Write-Host "7: Press '7' to Enable SecondaryLogon Service" -ForegroundColor Green
     Write-Host "Q: Press 'Q' to quit."
 }
 Function Troubleshooting{
@@ -340,15 +346,28 @@ Function Show-MenuWinRM{
     Clear-Host
     Write-Host "================ Configure WinRM ================"
     
-    Write-Host "1: Press '1' to Generate new Self-Signed Cert" -ForegroundColor Magenta
-    Write-Host "2: Press '2' to Configure WinRM Listener with new Cert" -ForegroundColor Magenta
-    Write-Host "3: Press '3' to Add Inbound FW Rule (WinRM HTTPS 5986)" -ForegroundColor Magenta    
+    Write-Host "1: Press '1' to Unbind existing Cert (to start fresh)" -ForegroundColor Magenta
+    Write-Host "2: Press '2' to Generate new Self-Signed Cert" -ForegroundColor Magenta
+    Write-Host "3: Press '3' to Configure WinRM Listener with new Cert" -ForegroundColor Magenta
+    Write-Host "4: Press '4' to Add Inbound FW Rule (WinRM HTTPS 5986)" -ForegroundColor Magenta
+    Write-Host "5: Press '5' to Add Permissions" -ForegroundColor Magenta   
     Write-Host "Q: Press 'Q' to quit."
 }
+Function RemoveCert(){
+Write-Host "Unbinding existing cert from WinRM HTTPS listener..." -ForegroundColor Cyan
+Try{
+Remove-WSManInstance winrm/config/Listener -SelectorSet @{Transport='HTTPS'; Address="*"}
+}
+Catch{}
+Write-Host "Done!" -ForegroundColor Green
+}
+
+
 Function Add-newCert(){
 Try{
 #Generate new CERT
-Write-Host "Generating new self signed certificate, only do this once! (if you want to repeat this action, please manually delete the cert first to avoid clutter)." -ForegroundColor Cyan
+Write-Host "Generating new self signed certificate, only do this once!" -ForegroundColor Cyan
+Write-Host "If you want to repeat this action, please manually delete the cert first to avoid clutter." -ForegroundColor Cyan
 $newCert = New-SelfSignedCertificate -DnsName $env:COMPUTERNAME -CertStoreLocation Cert:\LocalMachine\My
 $global:newCert = $newCert
 Write-Host "Done!" -ForegroundColor Green
@@ -405,14 +424,19 @@ do
      switch($selection)
      {
          '1' {
+              RemoveCert
+             }
+         '2' {
               Add-newCert
              }
-
-         '2' {
+         '3' {
               ConfigWinRMList
              }
-         '3' {
+         '4' {
               Add-FWWinRMHTTPS
+             }
+         '5' {
+              WinRMListenerPermissions
              }
      }
      pause
@@ -451,6 +475,27 @@ Write-Host "Launch MMC -> Certificates -> Find the cert WinRM is using -> Right 
 
 
 }
+Function EnableSecondaryLogon(){
+
+$GetSecondaryLogonService = Get-Service -Name seclogon
+$GetSecondaryLogonServiceStatus = Get-Service -Name seclogon | select -ExpandProperty status
+$GetSecondaryLogonServiceStartType = Get-Service -Name seclogon | select -ExpandProperty starttype
+
+If (($GetSecondaryLogonServiceStartType -eq "Disabled") -or ($GetSecondaryLogonServiceStartType -eq "Manual")){
+Get-Service seclogon | Set-Service -StartupType Automatic
+}
+
+$GetSecondaryLogonService | Start-Service
+$GetSecondaryLogonService.WaitForStatus('Running','00:00:05')
+$GetSecondaryLogonServiceStatus = Get-Service -Name seclogon | select -ExpandProperty status
+
+if($GetSecondaryLogonServiceStatus -eq "Running"){
+    Write-LogMessage -Type Success -Msg "Successfully started Secondary Logon Service!"
+}
+Else{
+    Write-LogMessage -Type Warning -Msg "Something went wrong, do it manually :("
+    }
+}
 
 do
  {
@@ -476,6 +521,9 @@ do
          '6' {
               WinRMListenerPermissions
              }
+         '7' {
+              EnableSecondaryLogon
+             }  
      }
      pause
  }
@@ -702,6 +750,153 @@ Function IPV6
 		result = $result;
 	}
 }
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: Secondary Logon
+# Description....: Check if Secondary Logon Service is running
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+Function SecondaryLogon
+{
+	[OutputType([PsCustomObject])]
+	param ()
+
+		Write-LogMessage -Type Verbose -Msg "Starting SecondaryLogon..."
+		$actual = ""
+		$result = $false
+		$errorMsg = ""
+	
+		$actual = (Get-Service -Name seclogon | select -ExpandProperty Status) -eq 'Running'
+
+		If($actual -eq $True)
+		{
+			$result = $actual
+			
+		}
+		else 
+		{
+			$actual = $actual
+			$result = $actual
+            $errorMsg = "Make sure 'Secondary Logon' Service is running, it is required for PSMShadowUsers to invoke Apps/WebApps. You can do it by rerunning the script with -Troubleshooting flag and selecting 'Enable SecondaryLogon Service'"
+		}
+		
+		Write-LogMessage -Type Verbose -Msg "Finished SecondaryLogon"
+
+	return [PsCustomObject]@{
+		expected = "True";
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: KUsrInitDELL
+# Description....: Check if the file KUsrInit.exe exists, indicating Dell Agent was deployed, Meaning Applocker need to whitelist it. 
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+Function KUsrInitDELL
+{
+	[OutputType([PsCustomObject])]
+	param ()
+
+		Write-LogMessage -Type Verbose -Msg "Starting KUsrInitDELL..."
+		$actual = ""
+		$result = $false
+		$errorMsg = ""
+	
+		$actual = Test-Path C:\Windows\System32\KUsrInit.exe
+
+		If($actual -eq $True)
+		{
+			$result = $actual
+			$errorMsg = "File C:\Windows\System32\KUsrInit.exe detected! This means DELL agent is deployed and replaced the default UserInit file, you will need to remember to whitelist this file after installation in the PSM Applocker settings. This error will act as a reminder, if you want the script to ignore it, edit the $PSMConfigFile and put 'disabled' under KUsrInit."
+            $KUsInit = 'true'
+            $parameters = Import-CliXML -Path $CONFIG_PARAMETERS_FILE            
+            if (-not($parameters.contains("KUsrInit"))){ #if doesn't contain the value, then we delete existing file and create new 
+            Remove-Item -Path $CONFIG_PARAMETERS_FILE
+            $parameters += @{KUsrInit = $KUsInit}
+            $parameters | Export-CliXML -Path $CONFIG_PARAMETERS_FILE -NoClobber -Encoding ASCII -Force
+            }
+            #If user changed the value manually in the file to false, we stop bugging him about this error.
+            if($parameters.KUsrInit -eq "disabled"){
+            $actual = $false
+            $result = $true
+            $errorMsg = ''
+            }
+            
+		}
+		else 
+		{
+			$actual = $actual
+			$result = $true
+            
+		}
+		
+		Write-LogMessage -Type Verbose -Msg "Finished KUsrInitDELL"
+
+	return [PsCustomObject]@{
+		expected = "false";
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: DotNet
+# Description....: Check if DotNet 4.8 or higher is installed.
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+function DotNet()
+{
+	[OutputType([PsCustomObject])]
+	param ()
+
+	Write-LogMessage -Type Verbose -Msg "Starting DotNet..."
+	$minimumDotNetVersionSupported = '528040'
+    $expected = ".Net 4.8 is installed"
+    $actual = ".Net 4.8 is not installed"
+    $result = $false
+    $errorMsg = ''
+
+    try 
+	{	
+		# Read the .NET release version form the registry
+		$dotNetRegKey = Get-ItemProperty -Path 'HKLM:\SOFTWARE\Microsoft\NET Framework Setup\NDP\v4\Full'
+		
+		# Check if the version is greater than the minium supported (if the Release key is not avilable , it's less than 4.5)
+		if (($dotNetRegKey.Release -eq $null) -or ($dotNetRegKey.Release -lt $minimumDotNetVersionSupported))
+		{		
+			$actual = ".NET 4.8 is not installed"
+            $result = $false
+            $errorMsg = ".NET 4.8 or higher is needed for version 12.1+ of CPM/PSM, download it from https://go.microsoft.com/fwlink/?linkid=2088631"
+		}
+		else
+		{
+			$actual = $expected
+			$result = $true
+		}
+	}
+    catch
+	{
+		$actual = ".NET 4.8 is not installed"
+		$result = $false
+	}
+    
+		Write-LogMessage -Type Verbose -Msg "Finished DotNet"
+
+    [PsCustomObject]@{
+        expected = $expected;
+        actual = $actual;
+        errorMsg = $errorMsg;
+        result = $result;
+    }
+}	
+
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: PSRemoting
@@ -1066,27 +1261,33 @@ Function DomainUser
 		{
 			$UserPrincipal = Get-UserPrincipal
 
-			if($UserPrincipal.ContextType -eq "Domain")
-			{
+			if($UserPrincipal.ContextType -eq "Domain"){
+                $errorMsg = ''
 				$actual = "Domain user"
-				$result = $true 
+				$result = $true
 			}
+            elseif(($_.Exception.Message -like  "*The server could not be contacted.*") -or ($_.Exception.Message -like "*Unable to find type*")){
+            $result = $false
+            $errorMsg = $_.Exception.message
+            $actual = $false
+            }
 			else 
 			{
-				$actual = "Not Domain user"
+				$actual = $false
 				$result = $false
+                $errorMsg = "Not Domain User"
 			}
 		}
 
 		Write-LogMessage -Type Verbose -Msg "Finished DomainUser"
 	} catch {
-		$errorMsg = "Could not verify if user is a Domain user. Error: $(Collect-ExceptionMessage $_.Exception)"
+		$errorMsg = "Error: $(Collect-ExceptionMessage $_.Exception)"
 	}
 		
 	return [PsCustomObject]@{
 		expected = "Domain User";
 		actual = $actual;
-		errorMsg = "";
+		errorMsg = $errorMsg;
 		result = $result;
 	}
 }
@@ -1161,14 +1362,13 @@ Function UsersLoggedOn
 
 		if($numOfActiveUsers -gt 1)
 		{
-			$actual = "More than one user is logged on"
-			Write-LogMessage -Type Warning -Msg $actual
-			$errorMsg = "Please see log for details"
+			$actual = $numOfActiveUsers
+			$errorMsg = "Check how many users logged on through Task Manager"
 			$result = $False
 		}
 		else
 		{
-			$actual = "Only one user is logged on"
+			$actual = "1"
 			$result = $True
 		}
 	}catch{
@@ -1180,7 +1380,7 @@ Function UsersLoggedOn
 	Write-LogMessage -Type Verbose -Msg "Finished UsersLoggedOn"
 	
     return [PsCustomObject]@{
-        expected = "Only one user is logged on";
+        expected = "1";
         actual = $actual;
         errorMsg = $errorMsg;
         result = $result;
@@ -1346,6 +1546,11 @@ Function ConsoleHTTPConnectivity
 			{
 				$errorMsg = "The underlying connection was closed - Unable to GET to '$connectorConfigURL'"
 				$result = $false
+			}
+            elseif ($_.Exception.Response.StatusCode.value__ -eq 404)
+			{
+				$actual = $true
+				$result = $true
 			}
 			else
 			{
@@ -1743,7 +1948,7 @@ Function GetPublicIP()
 	$PublicIP = ""
 
 	try{
-		Write-LogMessage -Type Info -Msg "Attempting to retrieve Public IP..."
+		Write-LogMessage -Type Info -Msg "Attempting to retrieve Public IP..." -Early
 		$PublicIP = (Invoke-WebRequest -Uri ipinfo.io/ip -UseBasicParsing -TimeoutSec 5).Content
 		$PublicIP | Out-File "$($env:COMPUTERNAME) PublicIP.txt"
 		Write-LogMessage -Type Success -Msg "Successfully fetched Public IP: $PublicIP and saved it in a local file '$($env:COMPUTERNAME) PublicIP.txt'"
@@ -1990,8 +2195,8 @@ Function Test-VersionUpdate()
 	$pCloudLatest = "$pCloudServicesURL/Latest.txt"
 	$pCloudScript = "$pCloudServicesURL/$g_ScriptName"
 	
-	Write-LogMessage -Type Info -Msg "Current version is: $versionNumber"
-	Write-LogMessage -Type Info -Msg "Checking for new version"
+	#Write-LogMessage -Type Info -Msg "Current version is: $versionNumber"
+	Write-LogMessage -Type Info -Msg "Checking for new version" -Early
 	$checkVersion = ""
 	$webVersion = New-Object System.Net.WebClient
 
@@ -2072,7 +2277,7 @@ if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationC
 	}
 	Else
 	{
-		Write-LogMessage -Type Info -Msg "Current version is the latest!"
+		Write-LogMessage -Type Info -Msg "Current version is the latest!" -Early
 	}
 }
 
@@ -2115,6 +2320,8 @@ Function Write-LogMessage
 		[Parameter(Mandatory=$false)]
 		[Switch]$Header,
 		[Parameter(Mandatory=$false)]
+		[Switch]$Early,
+		[Parameter(Mandatory=$false)]
 		[Switch]$SubHeader,
 		[Parameter(Mandatory=$false)]
 		[Switch]$Footer,
@@ -2151,7 +2358,7 @@ Function Write-LogMessage
 			{ 
 				If($_ -eq "Info")
 				{
-					Write-Host $MSG.ToString() -ForegroundColor $(If($Header -or $SubHeader) { "Magenta" } Else { "White" })
+					Write-Host $MSG.ToString() -ForegroundColor $(If($Header -or $SubHeader) { "magenta" } Elseif($Early){"DarkGray"} Else { "White" })
 				}
 				$msgToWrite += "[INFO]`t$Msg"
 			}
@@ -2248,9 +2455,43 @@ Function Get-LogHeader
 # Version : $versionNumber
 # CyberArk Software Ltd.
 ###########################################################################################
+"@
+}
+
+# @FUNCTION@ ======================================================================================================================
+# Name...........: Get-LogoHeader
+# Description....: Creates the logo header
+# Parameters.....: None
+# Return Values..: The Header image
+# =================================================================================================================================
+Function Get-LogoHeader{
+$t = @"
+  ____      _                _         _    
+ / ___|   _| |__   ___ _ __ / \   _ __| | __
+| |  | | | | '_ \ / _ \ '__/ _ \ | '__| |/ /
+| |__| |_| | |_) |  __/ | / ___ \| |  |   < 
+ \____\__, |_.__/ \___|_|/_/   \_\_|  |_|\_\
+      |___/ 
+
 
 "@
-}	
+
+for ($i=0;$i -lt $t.length;$i++) {
+if ($i%2) {
+ $c = "magenta"
+}
+elseif ($i%5) {
+ $c = "blue"
+}
+elseif ($i%7) {
+ $c = "white"
+}
+else {
+   $c = "white"
+}
+write-host $t[$i] -NoNewline -ForegroundColor $c
+}
+}
 
 #endregion
 
@@ -2259,25 +2500,26 @@ Function Get-LogHeader
 # Main start
 ###########################################################################################
 
-
-
-#troubleshooting section
-if ($Troubleshooting){Troubleshooting}
-
-Write-LogMessage -Type Info -Msg $(Get-LogHeader) -Header
-Write-LogMessage -Type Verbose -Msg "Verify user is a local Admin"
-$adminUser = IsUserAdmin 
-# Run only if the User is a local admin on the machine
 If ($adminUser -eq $False)
 {
 	Write-LogMessage -Type Error -Msg "You must logged on as a local administrator in order to run this script"
+    pause
 	return
 }
+if ($Troubleshooting){Troubleshooting}
 else
 {
+
+Write-LogMessage -Type Info -Msg $(Get-LogHeader) -Header
+Get-LogoHeader
+Write-LogMessage -Type Verbose -Msg "Verify user is a local Admin"
+
+
 	Write-LogMessage -Type Verbose -Msg "User is a local Admin!"
+    #troubleshooting section
+
 	try {
-		Write-LogMessage -Type Info -Msg "Checking for latest version"
+		Write-LogMessage -Type Info -Msg "Checking for latest version" -Early
 		Test-VersionUpdate	# Check the latest version
 	} catch {
 		Write-LogMessage -Type Error -Msg "Failed to check for latest version - Skipping. Error: $(Collect-ExceptionMessage $_.Exception)"
@@ -2285,7 +2527,7 @@ else
     try {
 		if(Test-Path $CONFIG_PARAMETERS_FILE)
 		{
-			Write-LogMessage -type Info -MSG "Getting parameters from config file '$CONFIG_PARAMETERS_FILE'"	
+			Write-LogMessage -type Info -MSG "Getting parameters from config file '$CONFIG_PARAMETERS_FILE'" -Early
 			Set-ScriptParameters -ConfigFile $CONFIG_PARAMETERS_FILE
 		}
 		else
@@ -2312,11 +2554,12 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # Main end
 ###########################################################################################	
 #endregion
+
 # SIG # Begin signature block
-# MIIfdgYJKoZIhvcNAQcCoIIfZzCCH2MCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIIfdQYJKoZIhvcNAQcCoIIfZjCCH2ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCDHuS2I/sfI8iA
-# s/wJAp+Nj2vVBisZU6/M0QV42AwNwqCCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCBJ7XMeuOv1oHa7
+# WoCn+kRVDctalo69nh6gvCGyYkxb6qCCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
 # NStkZdZqMA0GCSqGSIb3DQEBCwUAMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBH
 # bG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9i
 # YWxTaWduIFJvb3QgQ0EwHhcNMTgwOTE5MDAwMDAwWhcNMjgwMTI4MTIwMDAwWjBM
@@ -2393,92 +2636,92 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # rIzKAipex1J61Mf44/6Y6gOMGHW7jk84QxMSEbYIglfkHu+RhH8mhYRGKGgHOX3R
 # ViIoIxthvlG08/nTux3zeVnSAmXB5Z8KJ+FTzLyZhFii2i2TLAt/a95dMOb4YquH
 # qK9lmeFCLovYNIAihC7NHBruSGkt/sguM/17JWPpgHpjJxrIZH3dVH41LNPb3Bz2
-# KDHmv37ZRpQvuxAyctrTAPA6HJtuEJnIo6DhFR9LfTGCEFcwghBTAgEBMH4wbjEL
+# KDHmv37ZRpQvuxAyctrTAPA6HJtuEJnIo6DhFR9LfTGCEFYwghBSAgEBMH4wbjEL
 # MAkGA1UEBhMCQkUxGTAXBgNVBAoTEEdsb2JhbFNpZ24gbnYtc2ExRDBCBgNVBAMT
 # O0dsb2JhbFNpZ24gRXh0ZW5kZWQgVmFsaWRhdGlvbiBDb2RlU2lnbmluZyBDQSAt
 # IFNIQTI1NiAtIEczAgwhXYQh+9kPSKH6QS4wDQYJYIZIAWUDBAIBBQCgfDAQBgor
 # BgEEAYI3AgEMMQIwADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEE
-# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgtCOWzXZDebGx
-# ATCykgNBQoTGerfH/9LA3YCS3kbs3wUwDQYJKoZIhvcNAQEBBQAEggEAJDn7aP8D
-# nODHFMPjbA0t0wKK5FMXhx5efFVn1LVnlkTrdOTdr/Rx8UZ/03+xGiKJPgb+ST21
-# rchUKPQPKlNDImhZLEK6VeBD2uzmE2bICIIOqufeOmph7CjDAPSIWCD0l5rbDo6E
-# zvF3pOfH7I2upnPFqiDZrHMd8zjgnB7023UtBJ47O1YjaO5UN9maeOTqHIOH4o/T
-# B6d+sSKH5vFtfNhlAbeJpvIx3wCgaNgmuBzgtGXjWNE+atXaaJRIdGrX3B5+Pv3S
-# BIk4tG1rNUaIWGlw8AjXwhWsgglYigct/IXO8ji3Qy/0+1sUCek9+1DMj1ybsVUT
-# OqsKzI2C7Oxd+6GCDiwwgg4oBgorBgEEAYI3AwMBMYIOGDCCDhQGCSqGSIb3DQEH
-# AqCCDgUwgg4BAgEDMQ0wCwYJYIZIAWUDBAIBMIH/BgsqhkiG9w0BCRABBKCB7wSB
-# 7DCB6QIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBT332/1oLG+Fj5MTvte
-# CJfCK/7VUgIVANjRfiHcURBUAJp6m4HKJnRxe9XAGA8yMDIxMDIwOTA3NDkwNFow
-# AwIBHqCBhqSBgzCBgDELMAkGA1UEBhMCVVMxHTAbBgNVBAoTFFN5bWFudGVjIENv
-# cnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYD
-# VQQDEyhTeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIFNpZ25lciAtIEczoIIK
-# izCCBTgwggQgoAMCAQICEHsFsdRJaFFE98mJ0pwZnRIwDQYJKoZIhvcNAQELBQAw
-# gb0xCzAJBgNVBAYTAlVTMRcwFQYDVQQKEw5WZXJpU2lnbiwgSW5jLjEfMB0GA1UE
-# CxMWVmVyaVNpZ24gVHJ1c3QgTmV0d29yazE6MDgGA1UECxMxKGMpIDIwMDggVmVy
-# aVNpZ24sIEluYy4gLSBGb3IgYXV0aG9yaXplZCB1c2Ugb25seTE4MDYGA1UEAxMv
-# VmVyaVNpZ24gVW5pdmVyc2FsIFJvb3QgQ2VydGlmaWNhdGlvbiBBdXRob3JpdHkw
-# HhcNMTYwMTEyMDAwMDAwWhcNMzEwMTExMjM1OTU5WjB3MQswCQYDVQQGEwJVUzEd
-# MBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVj
-# IFRydXN0IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3Rh
-# bXBpbmcgQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC7WZ1ZVU+d
-# jHJdGoGi61XzsAGtPHGsMo8Fa4aaJwAyl2pNyWQUSym7wtkpuS7sY7Phzz8LVpD4
-# Yht+66YH4t5/Xm1AONSRBudBfHkcy8utG7/YlZHz8O5s+K2WOS5/wSe4eDnFhKXt
-# 7a+Hjs6Nx23q0pi1Oh8eOZ3D9Jqo9IThxNF8ccYGKbQ/5IMNJsN7CD5N+Qq3M0n/
-# yjvU9bKbS+GImRr1wOkzFNbfx4Dbke7+vJJXcnf0zajM/gn1kze+lYhqxdz0sUvU
-# zugJkV+1hHk1inisGTKPI8EyQRtZDqk+scz51ivvt9jk1R1tETqS9pPJnONI7rtT
-# DtQ2l4Z4xaE3AgMBAAGjggF3MIIBczAOBgNVHQ8BAf8EBAMCAQYwEgYDVR0TAQH/
-# BAgwBgEB/wIBADBmBgNVHSAEXzBdMFsGC2CGSAGG+EUBBxcDMEwwIwYIKwYBBQUH
-# AgEWF2h0dHBzOi8vZC5zeW1jYi5jb20vY3BzMCUGCCsGAQUFBwICMBkaF2h0dHBz
-# Oi8vZC5zeW1jYi5jb20vcnBhMC4GCCsGAQUFBwEBBCIwIDAeBggrBgEFBQcwAYYS
-# aHR0cDovL3Muc3ltY2QuY29tMDYGA1UdHwQvMC0wK6ApoCeGJWh0dHA6Ly9zLnN5
-# bWNiLmNvbS91bml2ZXJzYWwtcm9vdC5jcmwwEwYDVR0lBAwwCgYIKwYBBQUHAwgw
-# KAYDVR0RBCEwH6QdMBsxGTAXBgNVBAMTEFRpbWVTdGFtcC0yMDQ4LTMwHQYDVR0O
-# BBYEFK9j1sqjToVy4Ke8QfMpojh/gHViMB8GA1UdIwQYMBaAFLZ3+mlIR59TEtXC
-# 6gcydgfRlwcZMA0GCSqGSIb3DQEBCwUAA4IBAQB16rAt1TQZXDJF/g7h1E+meMFv
-# 1+rd3E/zociBiPenjxXmQCmt5l30otlWZIRxMCrdHmEXZiBWBpgZjV1x8viXvAn9
-# HJFHyeLojQP7zJAv1gpsTjPs1rSTyEyQY0g5QCHE3dZuiZg8tZiX6KkGtwnJj1NX
-# QZAv4R5NTtzKEHhsQm7wtsX4YVxS9U72a433Snq+8839A9fZ9gOoD+NT9wp17MZ1
-# LqpmhQSZt/gGV+HGDvbor9rsmxgfqrnjOgC/zoqUywHbnsc4uw9Sq9HjlANgCk2g
-# /idtFDL8P5dA4b+ZidvkORS92uTTw+orWrOVWFUEfcea7CMDjYUq0v+uqWGBMIIF
-# SzCCBDOgAwIBAgIQe9Tlr7rMBz+hASMEIkFNEjANBgkqhkiG9w0BAQsFADB3MQsw
-# CQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNV
-# BAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFudGVjIFNI
-# QTI1NiBUaW1lU3RhbXBpbmcgQ0EwHhcNMTcxMjIzMDAwMDAwWhcNMjkwMzIyMjM1
-# OTU5WjCBgDELMAkGA1UEBhMCVVMxHTAbBgNVBAoTFFN5bWFudGVjIENvcnBvcmF0
-# aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYDVQQDEyhT
-# eW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIFNpZ25lciAtIEczMIIBIjANBgkq
-# hkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArw6Kqvjcv2l7VBdxRwm9jTyB+HQVd2eQ
-# nP3eTgKeS3b25TY+ZdUkIG0w+d0dg+k/J0ozTm0WiuSNQI0iqr6nCxvSB7Y8tRok
-# KPgbclE9yAmIJgg6+fpDI3VHcAyzX1uPCB1ySFdlTa8CPED39N0yOJM/5Sym81kj
-# y4DeE035EMmqChhsVWFX0fECLMS1q/JsI9KfDQ8ZbK2FYmn9ToXBilIxq1vYyXRS
-# 41dsIr9Vf2/KBqs/SrcidmXs7DbylpWBJiz9u5iqATjTryVAmwlT8ClXhVhe6oVI
-# QSGH5d600yaye0BTWHmOUjEGTZQDRcTOPAPstwDyOiLFtG/l77CKmwIDAQABo4IB
-# xzCCAcMwDAYDVR0TAQH/BAIwADBmBgNVHSAEXzBdMFsGC2CGSAGG+EUBBxcDMEww
-# IwYIKwYBBQUHAgEWF2h0dHBzOi8vZC5zeW1jYi5jb20vY3BzMCUGCCsGAQUFBwIC
-# MBkaF2h0dHBzOi8vZC5zeW1jYi5jb20vcnBhMEAGA1UdHwQ5MDcwNaAzoDGGL2h0
-# dHA6Ly90cy1jcmwud3Muc3ltYW50ZWMuY29tL3NoYTI1Ni10c3MtY2EuY3JsMBYG
-# A1UdJQEB/wQMMAoGCCsGAQUFBwMIMA4GA1UdDwEB/wQEAwIHgDB3BggrBgEFBQcB
-# AQRrMGkwKgYIKwYBBQUHMAGGHmh0dHA6Ly90cy1vY3NwLndzLnN5bWFudGVjLmNv
-# bTA7BggrBgEFBQcwAoYvaHR0cDovL3RzLWFpYS53cy5zeW1hbnRlYy5jb20vc2hh
-# MjU2LXRzcy1jYS5jZXIwKAYDVR0RBCEwH6QdMBsxGTAXBgNVBAMTEFRpbWVTdGFt
-# cC0yMDQ4LTYwHQYDVR0OBBYEFKUTAamfhcwbbhYeXzsxqnk2AHsdMB8GA1UdIwQY
-# MBaAFK9j1sqjToVy4Ke8QfMpojh/gHViMA0GCSqGSIb3DQEBCwUAA4IBAQBGnq/w
-# uKJfoplIz6gnSyHNsrmmcnBjL+NVKXs5Rk7nfmUGWIu8V4qSDQjYELo2JPoKe/s7
-# 02K/SpQV5oLbilRt/yj+Z89xP+YzCdmiWRD0Hkr+Zcze1GvjUil1AEorpczLm+ip
-# Tfe0F1mSQcO3P4bm9sB/RDxGXBda46Q71Wkm1SF94YBnfmKst04uFZrlnCOvWxHq
-# calB+Q15OKmhDc+0sdo+mnrHIsV0zd9HCYbE/JElshuW6YUI6N3qdGBuYKVWeg3I
-# RFjc5vlIFJ7lv94AvXexmBRyFCTfxxEsHwA/w0sUxmcczB4Go5BfXFSLPuMzW4IP
-# xbeGAk5xn+lmRT92MYICWjCCAlYCAQEwgYswdzELMAkGA1UEBhMCVVMxHTAbBgNV
-# BAoTFFN5bWFudGVjIENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVz
-# dCBOZXR3b3JrMSgwJgYDVQQDEx9TeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5n
-# IENBAhB71OWvuswHP6EBIwQiQU0SMAsGCWCGSAFlAwQCAaCBpDAaBgkqhkiG9w0B
-# CQMxDQYLKoZIhvcNAQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTIxMDIwOTA3NDkwNFow
-# LwYJKoZIhvcNAQkEMSIEIDjx9Vp9jqNy+5kMTyWkO3psKBiyvncX2FuOT58OaZ5Y
-# MDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIEIMR0znYAfQI5Tg2l5N58FMaA+eKCATz+
-# 9lPvXbcf32H4MAsGCSqGSIb3DQEBAQSCAQCmOQlZfpnGr2lm7DGPsHhsI5SineX4
-# FGZze3i4bUTeQRmty9TP7VSVIupg0P5FEZa2Vk/u6TwSdDU3Btqre0UbKQM3MKSV
-# M+GI279d0QBgu8r9Ggucz1/nM3r8aSVEnu3SSpEbHeIxJsQP6ZXSwjD0EuZRgsUA
-# jmYSG6sWGHrV3geei1aLFjYxc0YV5TcBQZpYRoZN2e8mZQwXsMtQT3xQEgC2lpBf
-# Qp9zoL+pP6fb+8La1phSq2VKeRLphTZd2ErwxPA5SpdYiHHg5K/K2MuPMEiqqaFI
-# K0NChawit0qp86NZr5hBy7KMeCl6IZTfO3M15oaBaVpayn5Tix4lhsTa
+# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQga/xf13QLr6R9
+# ZgegA9Shzskg539HdpqXW/2MUetOARAwDQYJKoZIhvcNAQEBBQAEggEAkzu1wP2a
+# AWeBhzbF7T4Gofgar5RynmbDDjTZm3EU07D9Ci0zLfs3pwu9byd64eV5Zr0hwmhP
+# lC+v/+qSYMaqQOUiWFezjzJappgLbugyDwm8ve6B5va1YybW+vHth6praQK8Y+3k
+# 24DgXqjeXYc7/m6ItLk6GbJw0N0eYuq83PusvIjw0UsuTJffbkXoSJ8cKC7b/FNr
+# ptQ+QQ2Mx725qijqfv0MiSawHvt8NrCB21B9ObAJqquDd1eYXJJ3boAWpPdMc1GY
+# fniP07vhsFSfDBhktvtCupQ1mbNDJKl95W+ESd5T2i1Pc54WHskFQCpacJb3Y/Nt
+# gOf26MSOdQifYaGCDiswgg4nBgorBgEEAYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEH
+# AqCCDgQwgg4AAgEDMQ0wCwYJYIZIAWUDBAIBMIH+BgsqhkiG9w0BCRABBKCB7gSB
+# 6zCB6AIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBRZbjR+nUrzK1L+MXO0
+# gCqf/1Rc6AIUb07NZ64XEKe5vnV2JdGjejbKJPIYDzIwMjEwNTExMDY1MTI3WjAD
+# AgEeoIGGpIGDMIGAMQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29y
+# cG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNV
+# BAMTKFN5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzOgggqL
+# MIIFODCCBCCgAwIBAgIQewWx1EloUUT3yYnSnBmdEjANBgkqhkiG9w0BAQsFADCB
+# vTELMAkGA1UEBhMCVVMxFzAVBgNVBAoTDlZlcmlTaWduLCBJbmMuMR8wHQYDVQQL
+# ExZWZXJpU2lnbiBUcnVzdCBOZXR3b3JrMTowOAYDVQQLEzEoYykgMjAwOCBWZXJp
+# U2lnbiwgSW5jLiAtIEZvciBhdXRob3JpemVkIHVzZSBvbmx5MTgwNgYDVQQDEy9W
+# ZXJpU2lnbiBVbml2ZXJzYWwgUm9vdCBDZXJ0aWZpY2F0aW9uIEF1dGhvcml0eTAe
+# Fw0xNjAxMTIwMDAwMDBaFw0zMTAxMTEyMzU5NTlaMHcxCzAJBgNVBAYTAlVTMR0w
+# GwYDVQQKExRTeW1hbnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UECxMWU3ltYW50ZWMg
+# VHJ1c3QgTmV0d29yazEoMCYGA1UEAxMfU3ltYW50ZWMgU0hBMjU2IFRpbWVTdGFt
+# cGluZyBDQTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALtZnVlVT52M
+# cl0agaLrVfOwAa08cawyjwVrhponADKXak3JZBRLKbvC2Sm5Luxjs+HPPwtWkPhi
+# G37rpgfi3n9ebUA41JEG50F8eRzLy60bv9iVkfPw7mz4rZY5Ln/BJ7h4OcWEpe3t
+# r4eOzo3HberSmLU6Hx45ncP0mqj0hOHE0XxxxgYptD/kgw0mw3sIPk35CrczSf/K
+# O9T1sptL4YiZGvXA6TMU1t/HgNuR7v68kldyd/TNqMz+CfWTN76ViGrF3PSxS9TO
+# 6AmRX7WEeTWKeKwZMo8jwTJBG1kOqT6xzPnWK++32OTVHW0ROpL2k8mc40juu1MO
+# 1DaXhnjFoTcCAwEAAaOCAXcwggFzMA4GA1UdDwEB/wQEAwIBBjASBgNVHRMBAf8E
+# CDAGAQH/AgEAMGYGA1UdIARfMF0wWwYLYIZIAYb4RQEHFwMwTDAjBggrBgEFBQcC
+# ARYXaHR0cHM6Ly9kLnN5bWNiLmNvbS9jcHMwJQYIKwYBBQUHAgIwGRoXaHR0cHM6
+# Ly9kLnN5bWNiLmNvbS9ycGEwLgYIKwYBBQUHAQEEIjAgMB4GCCsGAQUFBzABhhJo
+# dHRwOi8vcy5zeW1jZC5jb20wNgYDVR0fBC8wLTAroCmgJ4YlaHR0cDovL3Muc3lt
+# Y2IuY29tL3VuaXZlcnNhbC1yb290LmNybDATBgNVHSUEDDAKBggrBgEFBQcDCDAo
+# BgNVHREEITAfpB0wGzEZMBcGA1UEAxMQVGltZVN0YW1wLTIwNDgtMzAdBgNVHQ4E
+# FgQUr2PWyqNOhXLgp7xB8ymiOH+AdWIwHwYDVR0jBBgwFoAUtnf6aUhHn1MS1cLq
+# BzJ2B9GXBxkwDQYJKoZIhvcNAQELBQADggEBAHXqsC3VNBlcMkX+DuHUT6Z4wW/X
+# 6t3cT/OhyIGI96ePFeZAKa3mXfSi2VZkhHEwKt0eYRdmIFYGmBmNXXHy+Je8Cf0c
+# kUfJ4uiNA/vMkC/WCmxOM+zWtJPITJBjSDlAIcTd1m6JmDy1mJfoqQa3CcmPU1dB
+# kC/hHk1O3MoQeGxCbvC2xfhhXFL1TvZrjfdKer7zzf0D19n2A6gP41P3CnXsxnUu
+# qmaFBJm3+AZX4cYO9uiv2uybGB+queM6AL/OipTLAduexzi7D1Kr0eOUA2AKTaD+
+# J20UMvw/l0Dhv5mJ2+Q5FL3a5NPD6itas5VYVQR9x5rsIwONhSrS/66pYYEwggVL
+# MIIEM6ADAgECAhB71OWvuswHP6EBIwQiQU0SMA0GCSqGSIb3DQEBCwUAMHcxCzAJ
+# BgNVBAYTAlVTMR0wGwYDVQQKExRTeW1hbnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UE
+# CxMWU3ltYW50ZWMgVHJ1c3QgTmV0d29yazEoMCYGA1UEAxMfU3ltYW50ZWMgU0hB
+# MjU2IFRpbWVTdGFtcGluZyBDQTAeFw0xNzEyMjMwMDAwMDBaFw0yOTAzMjIyMzU5
+# NTlaMIGAMQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRp
+# b24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5
+# bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzMwggEiMA0GCSqG
+# SIb3DQEBAQUAA4IBDwAwggEKAoIBAQCvDoqq+Ny/aXtUF3FHCb2NPIH4dBV3Z5Cc
+# /d5OAp5LdvblNj5l1SQgbTD53R2D6T8nSjNObRaK5I1AjSKqvqcLG9IHtjy1GiQo
+# +BtyUT3ICYgmCDr5+kMjdUdwDLNfW48IHXJIV2VNrwI8QPf03TI4kz/lLKbzWSPL
+# gN4TTfkQyaoKGGxVYVfR8QIsxLWr8mwj0p8NDxlsrYViaf1OhcGKUjGrW9jJdFLj
+# V2wiv1V/b8oGqz9KtyJ2ZezsNvKWlYEmLP27mKoBONOvJUCbCVPwKVeFWF7qhUhB
+# IYfl3rTTJrJ7QFNYeY5SMQZNlANFxM48A+y3API6IsW0b+XvsIqbAgMBAAGjggHH
+# MIIBwzAMBgNVHRMBAf8EAjAAMGYGA1UdIARfMF0wWwYLYIZIAYb4RQEHFwMwTDAj
+# BggrBgEFBQcCARYXaHR0cHM6Ly9kLnN5bWNiLmNvbS9jcHMwJQYIKwYBBQUHAgIw
+# GRoXaHR0cHM6Ly9kLnN5bWNiLmNvbS9ycGEwQAYDVR0fBDkwNzA1oDOgMYYvaHR0
+# cDovL3RzLWNybC53cy5zeW1hbnRlYy5jb20vc2hhMjU2LXRzcy1jYS5jcmwwFgYD
+# VR0lAQH/BAwwCgYIKwYBBQUHAwgwDgYDVR0PAQH/BAQDAgeAMHcGCCsGAQUFBwEB
+# BGswaTAqBggrBgEFBQcwAYYeaHR0cDovL3RzLW9jc3Aud3Muc3ltYW50ZWMuY29t
+# MDsGCCsGAQUFBzAChi9odHRwOi8vdHMtYWlhLndzLnN5bWFudGVjLmNvbS9zaGEy
+# NTYtdHNzLWNhLmNlcjAoBgNVHREEITAfpB0wGzEZMBcGA1UEAxMQVGltZVN0YW1w
+# LTIwNDgtNjAdBgNVHQ4EFgQUpRMBqZ+FzBtuFh5fOzGqeTYAex0wHwYDVR0jBBgw
+# FoAUr2PWyqNOhXLgp7xB8ymiOH+AdWIwDQYJKoZIhvcNAQELBQADggEBAEaer/C4
+# ol+imUjPqCdLIc2yuaZycGMv41UpezlGTud+ZQZYi7xXipINCNgQujYk+gp7+zvT
+# Yr9KlBXmgtuKVG3/KP5nz3E/5jMJ2aJZEPQeSv5lzN7Ua+NSKXUASiulzMub6KlN
+# 97QXWZJBw7c/hub2wH9EPEZcF1rjpDvVaSbVIX3hgGd+Yqy3Ti4VmuWcI69bEepx
+# qUH5DXk4qaENz7Sx2j6aescixXTN30cJhsT8kSWyG5bphQjo3ep0YG5gpVZ6DchE
+# WNzm+UgUnuW/3gC9d7GYFHIUJN/HESwfAD/DSxTGZxzMHgajkF9cVIs+4zNbgg/F
+# t4YCTnGf6WZFP3YxggJaMIICVgIBATCBizB3MQswCQYDVQQGEwJVUzEdMBsGA1UE
+# ChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0
+# IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcg
+# Q0ECEHvU5a+6zAc/oQEjBCJBTRIwCwYJYIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJ
+# AzENBgsqhkiG9w0BCRABBDAcBgkqhkiG9w0BCQUxDxcNMjEwNTExMDY1MTI3WjAv
+# BgkqhkiG9w0BCQQxIgQgB5H/JFFxaZ1o7IbBYxcviSlJR22XRd6yTe4ixe5222sw
+# NwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQgxHTOdgB9AjlODaXk3nwUxoD54oIBPP72
+# U+9dtx/fYfgwCwYJKoZIhvcNAQEBBIIBABT/UmLWqoccHX1lhb6Uicrh7IV1qpf0
+# DttBdu7dy810298t72i1JvokrEEHD7pZcG7a7egbL/pBzfq2my34BMCT6e90S9lw
+# CM7iy9Fx8rKYc/kV/plcEGNq5VUiJJgZ10Bs8TuH8gMyVCWANQIrgMRMnynhMN2U
+# MDUpjGaZphrZ2MVrnzsUIu0eK2X8Fqx3De5GV5L3+/5WQxttHbYQ9wMY7b8qY94H
+# l5yj3fbzElc61zAFzDIHmZwPFqLJPY5hYeerv9tXdkTK2J3MR3pCQagq+/3aXIuK
+# RhzkPMWNhU0XgpQas26tS0fKN8oPsS7PVJ/2IMtxJ3QkraJWD80RpQg=
 # SIG # End signature block
