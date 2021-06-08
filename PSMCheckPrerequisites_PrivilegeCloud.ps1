@@ -117,7 +117,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "PSMCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "21"
+[int]$versionNumber = "22"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -382,7 +382,8 @@ Function ConfigWinRMList(){
 #Configure WinRM Listener with the new Cert
 Try{
 Write-Host "Configuring WinRM with HTTPS Listener, you can check later by typing 'Winrm e winrm/config/listener'" -ForegroundColor Cyan
-New-WSManInstance winrm/config/Listener -SelectorSet @{Transport='HTTPS'; Address="*"} -ValueSet @{Hostname="$env:COMPUTERNAME";CertificateThumbprint=$newCert.Thumbprint}
+New-WSManInstance winrm/config/Listener -SelectorSet @{Transport='HTTPS'; Address="*"} -ValueSet @{Hostname="$env:COMPUTERNAME";CertificateThumbprint=$newCert.Thumbprint} > $null 2>&1
+Set-WSManInstance -ResourceURI winrm/config/service -ValueSet @{CertificateThumbprint=$newCert.Thumbprint} > $null 2>&1 #set the cert on the service level aswell.
 Set-Item WSMan:\localhost\Client\TrustedHosts -Value * -Force #Allow TrustedHosts
 
 #Check if HTTP 5985 is missing and add it aswell (in case user accidently deleted it, its required since RD Connection broker uses HTTP when adding role).
@@ -404,6 +405,8 @@ winrm delete winrm/config/Listener?Address=*+Transport=HTTPS
 
 [To Check the configuration manually]:
 Winrm e winrm/config/listener
+and
+Winrm get winrm/config
 
 [To perform manual connect]:
 Connect-WSMan -ComputerName <ComputerIPHere>
@@ -1261,7 +1264,7 @@ Function ServerInDomain
 		errorMsg = "";
 		result = $result;
 	}
-}	
+}
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: DomainUser
@@ -1284,24 +1287,27 @@ Function DomainUser
 		}
 		else
 		{
-			$UserPrincipal = Get-UserPrincipal
-
-			if($UserPrincipal.ContextType -eq "Domain"){
-                $errorMsg = ''
-				$actual = "Domain user"
-				$result = $true
+            
+            Try{
+                Add-Type -AssemblyName System.DirectoryServices.AccountManagement
+			    $UserPrincipal = [System.DirectoryServices.AccountManagement.UserPrincipal]::Current
+                if($UserPrincipal.ContextType -eq "Domain"){
+                    $errorMsg = ''
+				    $actual = "Domain user"
+				    $result = $true
 			}
-            elseif(($_.Exception.Message -like  "*The server could not be contacted.*") -or ($_.Exception.Message -like "*Unable to find type*")){
-            $result = $false
-            $errorMsg = $_.Exception.message
-            $actual = $false
-            }
 			else 
 			{
 				$actual = $false
 				$result = $false
                 $errorMsg = "Not Domain User"
 			}
+}
+            Catch{
+            $result = $false
+            $errorMsg = $_.Exception.InnerException.Message
+            $actual = $false
+            }
 		}
 
 		Write-LogMessage -Type Verbose -Msg "Finished DomainUser"
