@@ -22,7 +22,7 @@ param(
 $Script:LOG_FILE_PATH = "$PSScriptRoot\CreateCredFile-Helper.log"
 
 # Script Version
-$ScriptVersion = "1.1"
+$ScriptVersion = "1.2"
 
 #region Writer Functions
 $InDebug = $PSBoundParameters.Debug.IsPresent
@@ -1220,7 +1220,7 @@ Function Show-Menu
         [string[]]$Items
     )
     # Write the menu
-    Clear-Host
+    #Clear-Host
     Write-Host "================ ResetCredFile Guide ================"
     Write-Host ""
     Write-Host "Displaying Only Detected CyberArk Services:"
