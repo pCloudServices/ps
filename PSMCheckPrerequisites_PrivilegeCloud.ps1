@@ -97,13 +97,13 @@ If ($POC){
 
 ## List of GPOs to check
 $arrGPO = @(
-       [pscustomobject]@{Name='Require user authentication for remote connections by using Network Level Authentication';Expected='Disabled'}
-	   [pscustomobject]@{Name='Select RDP transport protocols'; Expected='Disabled'}	
-       [pscustomobject]@{Name='Use the specified Remote Desktop license servers'; Expected='Disabled'}   
-	   [pscustomobject]@{Name='Set client connection encryption level'; Expected='Disabled'}
-	   [pscustomobject]@{Name='Use Remote Desktop Easy Print printer driver first'; Expected='Enabled'}
-       [pscustomobject]@{Name='Allow CredSSP authentication'; Expected='Enabled'}
-       [pscustomobject]@{Name='Allow remote server management through WinRM'; Expected='Enabled'}
+       [pscustomobject]@{Name='Require user authentication for remote connections by using Network Level Authentication';Expected='Not Configured'}
+	   [pscustomobject]@{Name='Select RDP transport protocols'; Expected='Not Configured'}	
+       [pscustomobject]@{Name='Use the specified Remote Desktop license servers'; Expected='Not Configured'}   
+	   [pscustomobject]@{Name='Set client connection encryption level'; Expected='Not Configured'}
+	   [pscustomobject]@{Name='Use Remote Desktop Easy Print printer driver first'; Expected='Not Configured'}
+       [pscustomobject]@{Name='Allow CredSSP authentication'; Expected='Not Configured'}
+       [pscustomobject]@{Name='Allow remote server management through WinRM'; Expected='Not Configured'}
        [pscustomobject]@{Name='Prevent running First Run wizard'; Expected='Not Configured'}
        [pscustomobject]@{Name='Allow Remote Shell Access'; Expected='Not Configured'}
    )
@@ -119,7 +119,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "PSMCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "24"
+[int]$versionNumber = "25"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -1511,7 +1511,7 @@ Function GPO
 				# Check if GPO exists in RDS area
 				elseif($item.Category -match "Remote Desktop Services")
 				{
-					$expected = $false
+					$expected = 'Not Configured'
 					$compatible = $false
 					$errorMsg = "Expected:'Not Configured' Actual:"+$($item.state)
 				}
@@ -2145,6 +2145,9 @@ param
 		$script:PortalURL = ${Please enter your provided portal URL Address (Or leave empty)}#Example: https://<customerDomain>.privilegecloud.cyberark.com	
         $script:CustomerId = ${Please enter your CustomerId (Or leave empty)}
 		# Create the Config file for next use
+        if($script:portalURL -match "https://"){
+        $script:portalURL = ([System.Uri]$script:PortalURL).host
+        }
 		$parameters = @{
 			PortalURL = $PortalURL.Trim()
 			VaultIP = $VaultIP.trim()
@@ -2693,6 +2696,10 @@ else
             $VaultIP = (Get-Content $ConnectionDetailsFile | Select-String -allmatches "VaultIp:").ToString().ToLower().trim("vaultip:").Trim()
             $TunnelIP = (Get-Content $ConnectionDetailsFile | Select-String -allmatches "ConnectorServerIp:").ToString().ToLower().trim("connectorserverip:").Trim()
 		    }
+            ElseIf($PortalURL -match "https://")
+	            {
+		        $PortalURL = ([System.Uri]$PortalURL).Host
+	            }
             Else
             {
 			Write-LogMessage -type Info -MSG "Prompting user for input"
@@ -2721,8 +2728,8 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # SIG # Begin signature block
 # MIIfdgYJKoZIhvcNAQcCoIIfZzCCH2MCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAxwN3OkSDQsUSo
-# iyPx0pZCEXI3Ssv8fo4KwnjNSi5nlaCCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDQ5NcdCAKAj311
+# 7DRhE9t7Rh5I7LDmmVb/Hga4IIQ5K6CCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
 # NStkZdZqMA0GCSqGSIb3DQEBCwUAMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBH
 # bG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9i
 # YWxTaWduIFJvb3QgQ0EwHhcNMTgwOTE5MDAwMDAwWhcNMjgwMTI4MTIwMDAwWjBM
@@ -2804,17 +2811,17 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # O0dsb2JhbFNpZ24gRXh0ZW5kZWQgVmFsaWRhdGlvbiBDb2RlU2lnbmluZyBDQSAt
 # IFNIQTI1NiAtIEczAgxUZhOjzncM/KH38lwwDQYJYIZIAWUDBAIBBQCgfDAQBgor
 # BgEEAYI3AgEMMQIwADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEE
-# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgDizPtqkKekKe
-# 7VGcULVOjY14HwFQ4WnEW412FflcbiUwDQYJKoZIhvcNAQEBBQAEggEAPKorxDI4
-# o/g/+pSPdVWdZcDbSsZrj6pxBO2uGj4Jg+OSKzn2P5hkOsL9LUTc+eQKnNLJf6I5
-# 7xBj3JpuM8cy9EKQtI7KUzcj0IoGbvB5+2e0p2xZzXeg6NcuhDKZcYzJaTPbey3t
-# 95CkSzhllLazoT5ZQGmr9r8svB/Bq/2b9OJOjieIDy7BwIxhmOvwB98D71PgR0W8
-# RjLKpmDnd/T3OQLgvctA5PWiI8CuTzjbqilPcfhxjJBlk0eHkL9QJ2mU117/7iPA
-# ZquKGVGILXC8TvCl1u/LwkbjIi+oe0CuYuAm1BnYdIIs9qiQB+9tX3XzQ3KTNs67
-# jGaCdA8kgACJ3aGCDiwwgg4oBgorBgEEAYI3AwMBMYIOGDCCDhQGCSqGSIb3DQEH
+# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQguel+vKkspnPa
+# NMsAh/7eTOJCx1bgmLzULYw8lz2GGBQwDQYJKoZIhvcNAQEBBQAEggEAgoAyxvj5
+# ZuuRDtj9+HqIh0xtyhaZ1fEq9Z2UmofaN3iZazwbmQO12xtRQSjlfQPFExnrpX2N
+# e0uuyIv9vfk9wcgfMWilAqRSLaNLp3pO2WUIkiqqIS/PQdEtrHs1pO1OKCIa6aYb
+# 2Ryt12nV/qmV2atbQKM7r7g5BoJx8JSw738sr6W+BkTzbpU//RhrkT9lE8P4RGD0
+# 144A+f3LmrFs/iWjubEtTr/1a2QYM8ndq1EUn7WwcmXqNcJgra6PXY+FUYc3undC
+# nGPEr2Z1KjmztgeEx5f1wM5EPjIOHeXag06ByZDbBbDEMiYXOttN3ZK62jJmS7ne
+# 8IUZUe2ZDkQRJqGCDiwwgg4oBgorBgEEAYI3AwMBMYIOGDCCDhQGCSqGSIb3DQEH
 # AqCCDgUwgg4BAgEDMQ0wCwYJYIZIAWUDBAIBMIH/BgsqhkiG9w0BCRABBKCB7wSB
-# 7DCB6QIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBQvC2YS1vllrH/wHoJ5
-# pISYLGeG6QIVAPg1ADrAHHhtmyDpV9mnxXcwwcsKGA8yMDIxMTAxNDA3MjIwOFow
+# 7DCB6QIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBTJ4nhystuV0ge2CMCX
+# yi20osi/aQIVAPMcccZM9aSyRDFYKETHzYz8e2mCGA8yMDIxMTAyMDE2MTE1NVow
 # AwIBHqCBhqSBgzCBgDELMAkGA1UEBhMCVVMxHTAbBgNVBAoTFFN5bWFudGVjIENv
 # cnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYD
 # VQQDEyhTeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIFNpZ25lciAtIEczoIIK
@@ -2878,13 +2885,13 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # BAoTFFN5bWFudGVjIENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVz
 # dCBOZXR3b3JrMSgwJgYDVQQDEx9TeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5n
 # IENBAhB71OWvuswHP6EBIwQiQU0SMAsGCWCGSAFlAwQCAaCBpDAaBgkqhkiG9w0B
-# CQMxDQYLKoZIhvcNAQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTIxMTAxNDA3MjIwOFow
-# LwYJKoZIhvcNAQkEMSIEIA90vOP/i/X7H5cCf13utZZd9SVitqm4v0drZ5/6hdos
+# CQMxDQYLKoZIhvcNAQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTIxMTAyMDE2MTE1NVow
+# LwYJKoZIhvcNAQkEMSIEIHsLAfzeovX0mQ6szk0WE4YIKDZK+5wipa3DvfcF4NEP
 # MDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIEIMR0znYAfQI5Tg2l5N58FMaA+eKCATz+
-# 9lPvXbcf32H4MAsGCSqGSIb3DQEBAQSCAQB7HgSSQLvMyTQpTKLf2KeVZPhdLg6w
-# T4B6h77/6VC7VXXhlKIWJpbzkPfl/jAnRctOpIiAbOorelhtrKrfrmkhflVjZDMS
-# 6mydqE9y1AW0trASJoLUiYm9dze2UoxbnN+mo2dP8mjkZ3w6vwPU+OfgajR7XujJ
-# b5KpquORJpJqmsFWxC2bNqiFSRIUNhHsMsoyiEhZvGf2n65L7PhLk2mxEza7c6XU
-# 5aVbST46Lwi8u+r7tYQzww9nRhVnO9Z/P+YN9Vt1CHm7QNTrkdJ98SZIAPiTse1H
-# 9/YKS9WI0rPZ6WauCukLk2Pi+o1bApFqVnBd6GpUnZd5hynzFfbnM12U
+# 9lPvXbcf32H4MAsGCSqGSIb3DQEBAQSCAQB8CH4cvgWXFZtAE4dLj7RljX9e7jEJ
+# 4xYHtoAXnbNlysj6s1FmZzsRD5OUIASlEmYCRxE2S1fHnnS3VJ7BhaUQVqi06Ixn
+# hIRvmMDbYpl63Q8+Hb+0KyQGTFNoFQYLP4OoAnjO8Y2fAcynePhBMLDKEt5oE1IH
+# dJm8jorkNx8cFVCeVTtOpA/G/jWHP4DQL7gTgPMRzoGjzTQWjSsfQc53fEXMPHBQ
+# 2Li0kVbWXoBaTyPx3zP5cOohGFrukyCjI4A4k8vBz8uiKSMpdIjQik8T0QA21ml7
+# HDxh9G2f4abzA2NNPLMNdYAdwsaEVJxPprgruIvTMjEV4CbxK1Srw4SF
 # SIG # End signature block
