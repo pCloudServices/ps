@@ -69,6 +69,7 @@ $arrCheckPrerequisites = @(
 "Processors",
 "Memory",
 "SQLServerPermissions",
+"InterActiveLoginSmartCardIsDisabled",
 "UsersLoggedOn",
 "KBs",
 "IPV6",
@@ -106,6 +107,7 @@ $arrGPO = @(
        [pscustomobject]@{Name='Allow remote server management through WinRM'; Expected='Not Configured'}
        [pscustomobject]@{Name='Prevent running First Run wizard'; Expected='Not Configured'}
        [pscustomobject]@{Name='Allow Remote Shell Access'; Expected='Not Configured'}
+       [pscustomobject]@{Name='Interactive logon: Require Smart card'; Expected='Not Configured'}
    )
 
 
@@ -116,15 +118,15 @@ $ScriptLocation = Split-Path -Parent $MyInvocation.MyCommand.Path
 # Get Debug / Verbose parameters for Script
 $global:InDebug = $PSBoundParameters.Debug.IsPresent
 $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
-$global:PSMConfigFile = "PSMCheckPrerequisites_PrivilegeCloud.ini"
+$global:PSMConfigFile = "_PSMCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "25"
+[int]$versionNumber = "26"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
 $global:LOG_DATE = $(get-date -format yyyyMMdd) + "-" + $(get-date -format HHmmss)
-$global:LOG_FILE_PATH = "$ScriptLocation\PrivCloud-CheckPrerequisites-$LOG_DATE.log"
+$global:LOG_FILE_PATH = "$ScriptLocation\_PSMCheckPrerequisites_PrivilegeCloud.log"
 $global:CONFIG_PARAMETERS_FILE = "$ScriptLocation\$PSMConfigFile"
 
 # ------ SET Global Parameters ------
@@ -564,7 +566,48 @@ do
 }
 #endregion
 
+#region Find Components
+# @FUNCTION@ ======================================================================================================================
+# Name...........: Get-ServiceInstallPath
+# Description....: Get the installation path of a service
+# Parameters.....: Service Name
+# Return Values..: $true
+#                  $false
+# =================================================================================================================================
+# Save the Services List
+Function Get-ServiceInstallPath{
+    param ($ServiceName)
+    Begin
+    {
 
+    }
+    Process
+    {
+        $retInstallPath = $Null
+        try
+        {
+            if ($m_ServiceList -eq $null)
+            {
+                Set-Variable -Name m_ServiceList -Value $(Get-ChildItem "HKLM:\System\CurrentControlSet\Services" | ForEach-Object { Get-ItemProperty $_.pspath }) -Scope Script
+            }
+            $regPath = $m_ServiceList | Where-Object { $_.PSChildName -eq $ServiceName }
+            If ($regPath -ne $null)
+            {
+                $retInstallPath = $regPath.ImagePath.Substring($regPath.ImagePath.IndexOf('"'), $regPath.ImagePath.LastIndexOf('"') + 1)
+            }
+        }
+        catch
+        {
+            Throw $(New-Object System.Exception ("Cannot get Service Install path for $ServiceName", $_.Exception))
+        }
+
+        return $retInstallPath
+    }
+    End
+    {
+
+    }
+}
 
 #region Prerequisites methods
 # @FUNCTION@ ======================================================================================================================
@@ -577,20 +620,33 @@ Function CheckNoRDS
 {
 	[OutputType([PsCustomObject])]
 	param ()
-	try{
-		Write-LogMessage -Type Verbose -Msg "Starting CheckNoRDS..."
-		$errorMsg = ""
-		$result = $True
-		$actual = (Get-WindowsFeature Remote-Desktop-Services).InstallState -eq "Installed"
-		If($actual -eq $True)
-		{
-			$result = $False
-			$errorMsg = "RDS shouldn't be deployed before CyberArk is installed, remove RDS role and make sure there are no domain level GPO RDS settings applied (rsop.msc). Please note, after you remove RDS and restart you may need to use 'mstsc /admin' to connect back to the machine."
-		}
-		Write-LogMessage -Type Verbose -Msg "Finished CheckNoRDS"
-	} catch {
-		$errorMsg = "Could not check RDS installation. Error: $(Collect-ExceptionMessage $_.Exception)"
-	}
+
+    Write-LogMessage -Type Verbose -Msg "Starting CheckNoRDS..."
+
+    $global:REGKEY_PSMSERVICE = "Cyber-Ark Privileged Session Manager"
+    #If PSM is already installed, there is no need to run this check, since PSM can't be installed without RDS, we can assume RDS is installed.
+    $global:m_ServiceList = $null
+    if ($(Get-ServiceInstallPath $REGKEY_PSMSERVICE) -eq $null){
+	    try{
+	    	$errorMsg = ""
+	    	$result = $True
+	    	$actual = (Get-WindowsFeature Remote-Desktop-Services).InstallState -eq "Installed"
+	    	If($actual -eq $True)
+	    	{
+	    		$result = $False
+	    		$errorMsg = "RDS shouldn't be deployed before CyberArk is installed, remove RDS role and make sure there are no domain level GPO RDS settings applied (rsop.msc). Please note, after you remove RDS and restart you may need to use 'mstsc /admin' to connect back to the machine."
+	    	}
+	    } catch {
+	    	$errorMsg = "Could not check RDS installation. Error: $(Collect-ExceptionMessage $_.Exception)"
+	    }
+    }
+    Else{
+    $result = $true
+    $actual = $true
+    $errorMsg = ""
+    }
+
+    Write-LogMessage -Type Verbose -Msg "Finished CheckNoRDS"
 		
 	return [PsCustomObject]@{
 		expected = $False;
@@ -1000,7 +1056,7 @@ Function PSRemoting
 				}
 				else
 				{
-					$errorMsg = "Could not connect using PSRemoting to $($env:COMPUTERNAME)"
+					$errorMsg = "Could not connect using PSRemoting to $($env:COMPUTERNAME), Error: $(Collect-ExceptionMessage $_.exception.Message)"
 				}
 			}
 		} Else {
@@ -1489,7 +1545,7 @@ Function GPO
 		gpresult /f /x $path *> $null
 
 		[xml]$xml = Get-Content $path
-		$RDSGPOs = $xml.Rsop.ComputerResults.ExtensionData.extension.policy | Where-Object { $_.Category -match "Windows Components" }
+		$RDSGPOs = $xml.Rsop.ComputerResults.ExtensionData.extension.policy | Where-Object { ($_.Category -match "Windows Components") }
 		if($RDSGPOs.Count -gt 0)
 		{
 			ForEach($item in $RDSGPOs)
@@ -1551,7 +1607,7 @@ Function GPO
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: VaultConnectivity
-# Description....: Tests Vault network connectivity on port 1858
+# Description....: Vault network connectivity on port 1858
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
@@ -1565,7 +1621,7 @@ Function VaultConnectivity
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: TunnelConnectivity
-# Description....: Tests Tunnel network connectivity on port 443
+# Description....: Tunnel network connectivity on port 443
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
@@ -1579,7 +1635,7 @@ Function TunnelConnectivity
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: ConsoleNETConnectivity
-# Description....: Tests Privilege Cloud network connectivity on port 443
+# Description....: Privilege Cloud network connectivity on port 443
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
@@ -1593,7 +1649,7 @@ Function ConsoleNETConnectivity
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: ConsoleHTTPConnectivity
-# Description....: Tests Privilege Cloud network connectivity on port 443
+# Description....: Privilege Cloud network connectivity on port 443
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
@@ -1653,7 +1709,7 @@ Function ConsoleHTTPConnectivity
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: ConsoleHTTPConnectivity
-# Description....: Tests Privilege Cloud network connectivity on port 443
+# Description....: Privilege Cloud network connectivity on port 443
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
@@ -1695,7 +1751,7 @@ Function SecureTunnelLocalPort
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: CRLConnectivity
-# Description....: Tests CRL connectivity
+# Description....: CRL connectivity
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
@@ -1709,31 +1765,20 @@ Function CRLConnectivity
 		$result = $false
 		$errorMsg = ""
 
-		$cert1 = 0
-		$cert2 = 0
-		Try{
-			$cert1 = Invoke-WebRequest -Uri http://crl3.digicert.com/CloudFlareIncECCCA2.crl -TimeoutSec 6 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -UseBasicParsing  | Select-Object -ExpandProperty StatusCode
-			$cert2 = Invoke-WebRequest -Uri http://crl4.digicert.com/CloudFlareIncECCCA2.crl -TimeoutSec 6 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -UseBasicParsing | Select-Object -ExpandProperty StatusCode
+		$cert = 0
 
-			If(($cert1 -eq 200) -and ($cert2 -eq 200))
+
+			$cert = Invoke-WebRequest -Uri http://ocsp.digicert.com -TimeoutSec 6 -ErrorAction SilentlyContinue -WarningAction SilentlyContinue -UseBasicParsing  | Select-Object -ExpandProperty StatusCode
+
+			If($cert -eq 200)
 			{
 				$actual = "200"
 				$result = $true
-			}
-		} catch {
-			if ($Error[0].ErrorDetails.Message -eq "404 - Not Found")
-			{
-				$errorMsg = "Can't find CRL file on target site, was it changed? Contact CyberArk"
-			}
-			else
-			{
-				Throw $(New-Object System.Exception ("CRLConnectivity: Can't resolve hostname (digicert.com), check DNS settings",$_.Exception))
-			}
-		}
-			
+            }
+
 		Write-LogMessage -Type Verbose -Msg "Finished CRLConnectivity"
 	} catch {
-		$errorMsg = "Could not verify CRL connectivity. Error: $(Collect-ExceptionMessage $_.Exception)"
+		$errorMsg = "Could not verify CRL connectivity, Check DNS/FW. Error: $(Collect-ExceptionMessage $_.Exception.Message)"
 	}
 		
 	return [PsCustomObject]@{
@@ -1746,7 +1791,7 @@ Function CRLConnectivity
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: CustomerPortalConnectivity
-# Description....: Tests Privilege Cloud Console network connectivity on port 443
+# Description....: Privilege Cloud Console network connectivity on port 443
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
@@ -1762,7 +1807,7 @@ Function CustomerPortalConnectivity
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: Processors
-# Description....: Tests minimum required CPU cores
+# Description....: Minimum required CPU cores
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
@@ -1804,7 +1849,7 @@ Function Processors
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: Memory
-# Description....: Tests minimum required Memory
+# Description....: Minimum required Memory
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
@@ -1817,9 +1862,9 @@ Function Memory
 		$actual = ""
 		$result = $false
 		$errorMsg = ""
-		$Memory = [math]::Round(((Get-CimInstance CIM_PhysicalMemory).Capacity | Measure-Object -Sum).Sum / 1GB, 2)
-		$MemoryAWS = [math]::Round((Get-CimInstance -ClassName CIM_ComputerSystem).TotalPhysicalMemory / 1GB, 0)
-		
+		$Memory = Try{[math]::Round(((Get-CimInstance CIM_PhysicalMemory).Capacity | Measure-Object -Sum).Sum / 1GB, 2)}Catch{}
+		$MemoryAWS = Try{[math]::Round((Get-CimInstance -ClassName CIM_ComputerSystem).TotalPhysicalMemory / 1GB, 0)}Catch{}
+
 		if ($Memory -ge 8 -or $MemoryAWS -ge 8)
 		{
 			  $actual = $Memory
@@ -1847,7 +1892,7 @@ Function Memory
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: SQLServerPermissions
-# Description....: Tests required SQL Server permissions
+# Description....: Required SQL Server permissions
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
@@ -1914,7 +1959,7 @@ Function SQLServerPermissions
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: LogonAsaService
-# Description....: Tests Logon as service permissions
+# Description....: Logon as service permissions
 # Parameters.....: None
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
@@ -1977,12 +2022,59 @@ Function LogonAsaService
 	}
 }
 
+# @FUNCTION@ ======================================================================================================================
+# Name...........: InterActiveLoginSmartCardIsDisabled
+# Description....: Check that no smart card is required to RDP to the machine
+# Parameters.....: None
+# Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
+# =================================================================================================================================
+Function InterActiveLoginSmartCardIsDisabled
+{
+	[OutputType([PsCustomObject])]
+	param ()
+	try{
+		Write-LogMessage -Type Verbose -Msg "Starting InterActiveLoginSmartCardIsDisabled..."
+		$actual = ""
+		$result = $False
+		$errorMsg = ""
+        $expected = $true
+
+		$secOptionspath = "C:\Windows\Temp\SecReport.txt"
+		SecEdit /areas securitypolicy /export /cfg $secOptionspath | Out-Null
+
+        $secOptionsValue = Get-Content $secOptionspath
+		$SmartCardIsEnabled = $secOptionsValue | Select-String -SimpleMatch 'MACHINE\Software\Microsoft\Windows\CurrentVersion\Policies\System\ScForceOption=4,1'
+        #if returns some value, it means its enabled (User will received CredSSP error during ansible install).
+        if($SmartCardIsEnabled -ne $null){
+            $result = $false
+		    $errorMsg = "Please disable `"GPO: Interactive logon: Require Smart card`""
+            $actual = $false
+        }
+        Else{
+            $result = $True
+		    $errorMsg = ""
+            $actual = $True
+        }
+		
+		Write-LogMessage -Type Verbose -Msg "Finished InterActiveLoginSmartCardIsDisabled"
+	} catch {
+		$errorMsg = "Error: $(Collect-ExceptionMessage $_.Exception)"
+	}
+		
+	return [PsCustomObject]@{
+		expected = $True;
+		actual = $actual;
+		errorMsg = $errorMsg;
+		result = $result;
+	}
+}
+
 #endregion
 
 #region Helper functions
 # @FUNCTION@ ======================================================================================================================
 # Name...........: Test-NetConnectivity
-# Description....: Tests network connectivity to a specific Hostname/IP on a specific port
+# Description....: Network connectivity to a specific Hostname/IP on a specific port
 # Parameters.....: ComputerName, Port
 # Return Values..: Custom object (Expected, Actual, ErrorMsg, Result)
 # =================================================================================================================================
@@ -2091,9 +2183,10 @@ Function GetPublicIP()
 		return $PublicIP
 	}
 	catch{
-		Throw $(New-Object System.Exception ("GetPublicIP: Couldn't grab Public IP for you, you'll have to do it manually",$_.Exception))
+		Write-LogMessage -Type Info -Msg "GetPublicIP: Couldn't grab Public IP for you, you'll have to do it manually: $(Collect-ExceptionMessage $_.Exception.Message)" -Early
 	}
 }
+
 
 # @FUNCTION@ ======================================================================================================================
 # Name...........: Set-ScriptParameters
@@ -2311,8 +2404,8 @@ Function CheckPrerequisites()
 			Write-LogMessage -Type Info -Msg "Checking Prerequisites completed with $errorCnt $errorStr and $warnCnt $warnStr"
 
             Write-LogMessage -Type Info -Msg "$SEPARATE_LINE"
-            #$global:table | Format-Table -Wrap
-            $global:table | Format-Table -Wrap -AutoSize
+            $global:table | Format-Table -Wrap
+            #$global:table | Format-Table -Wrap -AutoSize
 
             Write-LogMessage -Type LogOnly -Msg $($global:table | Out-String)
         }
@@ -2392,7 +2485,7 @@ if (-not ([System.Management.Automation.PSTypeName]'ServerCertificateValidationC
 	}
 	Catch
 	{
-		Throw $(New-Object System.Exception ("Test-VersionUpdate: Couldn't check for latest version, probably FW block",$_.Exception))
+		Write-LogMessage -Type Info -Msg "Test-VersionUpdate: Couldn't check for latest version, probably DNS/FW Issue: $(Collect-ExceptionMessage $_.Exception.Message)" -Early
 	}
 
 	If ($checkVersion -gt $versionNumber)
@@ -2624,16 +2717,16 @@ $t = @"
 
 for ($i=0;$i -lt $t.length;$i++) {
 if ($i%2) {
- $c = "green"
+ $c = "yellow"
 }
 elseif ($i%5) {
- $c = "white"
+ $c = "gray"
 }
 elseif ($i%7) {
- $c = "Blue"
+ $c = "red"
 }
 else {
-   $c = "Blue"
+   $c = "green"
 }
 write-host $t[$i] -NoNewline -ForegroundColor $c
 }
@@ -2646,6 +2739,17 @@ write-host $t[$i] -NoNewline -ForegroundColor $c
 # Main start
 ###########################################################################################
 $Host.UI.RawUI.WindowTitle = "Privilege Cloud Prerequisites Check"
+
+#Cleanup log file if it gets too big
+if (Test-Path $LOG_FILE_PATH)
+{
+    if (Get-ChildItem $LOG_FILE_PATH -File | Where-Object { $_.Length -gt 5000KB })
+    {
+        Write-LogMessage -type Info -MSG "Log file is getting too big, deleting it."
+        Remove-Item $LOG_FILE_PATH -Force
+    }
+
+}
 
 Write-LogMessage -Type Info -Msg $(Get-LogHeader) -Header
 Get-LogoHeader
@@ -2662,8 +2766,6 @@ If ($adminUser -eq $False)
 if ($Troubleshooting){Troubleshooting}
 else
 {
-
-
 	try {
 		Write-LogMessage -Type Info -Msg "Checking for latest version" -Early
 		Test-VersionUpdate	# Check the latest version
@@ -2726,10 +2828,10 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 ###########################################################################################	
 #endregion
 # SIG # Begin signature block
-# MIIfdgYJKoZIhvcNAQcCoIIfZzCCH2MCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIIfdQYJKoZIhvcNAQcCoIIfZjCCH2ICAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDQ5NcdCAKAj311
-# 7DRhE9t7Rh5I7LDmmVb/Hga4IIQ5K6CCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCB/C0u5mHEnyAAg
+# Quu26RU83cYvM08yB8W/5tW/RpSnbqCCDnUwggROMIIDNqADAgECAg0B7l8Wnf+X
 # NStkZdZqMA0GCSqGSIb3DQEBCwUAMFcxCzAJBgNVBAYTAkJFMRkwFwYDVQQKExBH
 # bG9iYWxTaWduIG52LXNhMRAwDgYDVQQLEwdSb290IENBMRswGQYDVQQDExJHbG9i
 # YWxTaWduIFJvb3QgQ0EwHhcNMTgwOTE5MDAwMDAwWhcNMjgwMTI4MTIwMDAwWjBM
@@ -2806,92 +2908,92 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # 33PyMrIzdbfkkskqLxrlnYJg4UMD6/5X5eWIn3+m8ZO3VAedNBpNfaooVo6drFel
 # P6M4qq3Nu3/RUI9+qNJhNT39NPFmFxeqNnT92bOiBadm+q1YZ8XMgvjQFEfVt6Or
 # n1wxxinsJ2mDG4qmfMaGWY6kFiUNhy7ES8JRgeiq7SRW5SHzSGU+0i6LPcPQJC6Y
-# aP/c0vMglM0C7/z959T1Oerqs1MWMBJaismNYTzFZTGCEFcwghBTAgEBMH4wbjEL
+# aP/c0vMglM0C7/z959T1Oerqs1MWMBJaismNYTzFZTGCEFYwghBSAgEBMH4wbjEL
 # MAkGA1UEBhMCQkUxGTAXBgNVBAoTEEdsb2JhbFNpZ24gbnYtc2ExRDBCBgNVBAMT
 # O0dsb2JhbFNpZ24gRXh0ZW5kZWQgVmFsaWRhdGlvbiBDb2RlU2lnbmluZyBDQSAt
 # IFNIQTI1NiAtIEczAgxUZhOjzncM/KH38lwwDQYJYIZIAWUDBAIBBQCgfDAQBgor
 # BgEEAYI3AgEMMQIwADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGCNwIBBDAcBgorBgEE
-# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQguel+vKkspnPa
-# NMsAh/7eTOJCx1bgmLzULYw8lz2GGBQwDQYJKoZIhvcNAQEBBQAEggEAgoAyxvj5
-# ZuuRDtj9+HqIh0xtyhaZ1fEq9Z2UmofaN3iZazwbmQO12xtRQSjlfQPFExnrpX2N
-# e0uuyIv9vfk9wcgfMWilAqRSLaNLp3pO2WUIkiqqIS/PQdEtrHs1pO1OKCIa6aYb
-# 2Ryt12nV/qmV2atbQKM7r7g5BoJx8JSw738sr6W+BkTzbpU//RhrkT9lE8P4RGD0
-# 144A+f3LmrFs/iWjubEtTr/1a2QYM8ndq1EUn7WwcmXqNcJgra6PXY+FUYc3undC
-# nGPEr2Z1KjmztgeEx5f1wM5EPjIOHeXag06ByZDbBbDEMiYXOttN3ZK62jJmS7ne
-# 8IUZUe2ZDkQRJqGCDiwwgg4oBgorBgEEAYI3AwMBMYIOGDCCDhQGCSqGSIb3DQEH
-# AqCCDgUwgg4BAgEDMQ0wCwYJYIZIAWUDBAIBMIH/BgsqhkiG9w0BCRABBKCB7wSB
-# 7DCB6QIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBTJ4nhystuV0ge2CMCX
-# yi20osi/aQIVAPMcccZM9aSyRDFYKETHzYz8e2mCGA8yMDIxMTAyMDE2MTE1NVow
-# AwIBHqCBhqSBgzCBgDELMAkGA1UEBhMCVVMxHTAbBgNVBAoTFFN5bWFudGVjIENv
-# cnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYD
-# VQQDEyhTeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIFNpZ25lciAtIEczoIIK
-# izCCBTgwggQgoAMCAQICEHsFsdRJaFFE98mJ0pwZnRIwDQYJKoZIhvcNAQELBQAw
-# gb0xCzAJBgNVBAYTAlVTMRcwFQYDVQQKEw5WZXJpU2lnbiwgSW5jLjEfMB0GA1UE
-# CxMWVmVyaVNpZ24gVHJ1c3QgTmV0d29yazE6MDgGA1UECxMxKGMpIDIwMDggVmVy
-# aVNpZ24sIEluYy4gLSBGb3IgYXV0aG9yaXplZCB1c2Ugb25seTE4MDYGA1UEAxMv
-# VmVyaVNpZ24gVW5pdmVyc2FsIFJvb3QgQ2VydGlmaWNhdGlvbiBBdXRob3JpdHkw
-# HhcNMTYwMTEyMDAwMDAwWhcNMzEwMTExMjM1OTU5WjB3MQswCQYDVQQGEwJVUzEd
-# MBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVj
-# IFRydXN0IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3Rh
-# bXBpbmcgQ0EwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC7WZ1ZVU+d
-# jHJdGoGi61XzsAGtPHGsMo8Fa4aaJwAyl2pNyWQUSym7wtkpuS7sY7Phzz8LVpD4
-# Yht+66YH4t5/Xm1AONSRBudBfHkcy8utG7/YlZHz8O5s+K2WOS5/wSe4eDnFhKXt
-# 7a+Hjs6Nx23q0pi1Oh8eOZ3D9Jqo9IThxNF8ccYGKbQ/5IMNJsN7CD5N+Qq3M0n/
-# yjvU9bKbS+GImRr1wOkzFNbfx4Dbke7+vJJXcnf0zajM/gn1kze+lYhqxdz0sUvU
-# zugJkV+1hHk1inisGTKPI8EyQRtZDqk+scz51ivvt9jk1R1tETqS9pPJnONI7rtT
-# DtQ2l4Z4xaE3AgMBAAGjggF3MIIBczAOBgNVHQ8BAf8EBAMCAQYwEgYDVR0TAQH/
-# BAgwBgEB/wIBADBmBgNVHSAEXzBdMFsGC2CGSAGG+EUBBxcDMEwwIwYIKwYBBQUH
-# AgEWF2h0dHBzOi8vZC5zeW1jYi5jb20vY3BzMCUGCCsGAQUFBwICMBkaF2h0dHBz
-# Oi8vZC5zeW1jYi5jb20vcnBhMC4GCCsGAQUFBwEBBCIwIDAeBggrBgEFBQcwAYYS
-# aHR0cDovL3Muc3ltY2QuY29tMDYGA1UdHwQvMC0wK6ApoCeGJWh0dHA6Ly9zLnN5
-# bWNiLmNvbS91bml2ZXJzYWwtcm9vdC5jcmwwEwYDVR0lBAwwCgYIKwYBBQUHAwgw
-# KAYDVR0RBCEwH6QdMBsxGTAXBgNVBAMTEFRpbWVTdGFtcC0yMDQ4LTMwHQYDVR0O
-# BBYEFK9j1sqjToVy4Ke8QfMpojh/gHViMB8GA1UdIwQYMBaAFLZ3+mlIR59TEtXC
-# 6gcydgfRlwcZMA0GCSqGSIb3DQEBCwUAA4IBAQB16rAt1TQZXDJF/g7h1E+meMFv
-# 1+rd3E/zociBiPenjxXmQCmt5l30otlWZIRxMCrdHmEXZiBWBpgZjV1x8viXvAn9
-# HJFHyeLojQP7zJAv1gpsTjPs1rSTyEyQY0g5QCHE3dZuiZg8tZiX6KkGtwnJj1NX
-# QZAv4R5NTtzKEHhsQm7wtsX4YVxS9U72a433Snq+8839A9fZ9gOoD+NT9wp17MZ1
-# LqpmhQSZt/gGV+HGDvbor9rsmxgfqrnjOgC/zoqUywHbnsc4uw9Sq9HjlANgCk2g
-# /idtFDL8P5dA4b+ZidvkORS92uTTw+orWrOVWFUEfcea7CMDjYUq0v+uqWGBMIIF
-# SzCCBDOgAwIBAgIQe9Tlr7rMBz+hASMEIkFNEjANBgkqhkiG9w0BAQsFADB3MQsw
-# CQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNV
-# BAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFudGVjIFNI
-# QTI1NiBUaW1lU3RhbXBpbmcgQ0EwHhcNMTcxMjIzMDAwMDAwWhcNMjkwMzIyMjM1
-# OTU5WjCBgDELMAkGA1UEBhMCVVMxHTAbBgNVBAoTFFN5bWFudGVjIENvcnBvcmF0
-# aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYDVQQDEyhT
-# eW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIFNpZ25lciAtIEczMIIBIjANBgkq
-# hkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEArw6Kqvjcv2l7VBdxRwm9jTyB+HQVd2eQ
-# nP3eTgKeS3b25TY+ZdUkIG0w+d0dg+k/J0ozTm0WiuSNQI0iqr6nCxvSB7Y8tRok
-# KPgbclE9yAmIJgg6+fpDI3VHcAyzX1uPCB1ySFdlTa8CPED39N0yOJM/5Sym81kj
-# y4DeE035EMmqChhsVWFX0fECLMS1q/JsI9KfDQ8ZbK2FYmn9ToXBilIxq1vYyXRS
-# 41dsIr9Vf2/KBqs/SrcidmXs7DbylpWBJiz9u5iqATjTryVAmwlT8ClXhVhe6oVI
-# QSGH5d600yaye0BTWHmOUjEGTZQDRcTOPAPstwDyOiLFtG/l77CKmwIDAQABo4IB
-# xzCCAcMwDAYDVR0TAQH/BAIwADBmBgNVHSAEXzBdMFsGC2CGSAGG+EUBBxcDMEww
-# IwYIKwYBBQUHAgEWF2h0dHBzOi8vZC5zeW1jYi5jb20vY3BzMCUGCCsGAQUFBwIC
-# MBkaF2h0dHBzOi8vZC5zeW1jYi5jb20vcnBhMEAGA1UdHwQ5MDcwNaAzoDGGL2h0
-# dHA6Ly90cy1jcmwud3Muc3ltYW50ZWMuY29tL3NoYTI1Ni10c3MtY2EuY3JsMBYG
-# A1UdJQEB/wQMMAoGCCsGAQUFBwMIMA4GA1UdDwEB/wQEAwIHgDB3BggrBgEFBQcB
-# AQRrMGkwKgYIKwYBBQUHMAGGHmh0dHA6Ly90cy1vY3NwLndzLnN5bWFudGVjLmNv
-# bTA7BggrBgEFBQcwAoYvaHR0cDovL3RzLWFpYS53cy5zeW1hbnRlYy5jb20vc2hh
-# MjU2LXRzcy1jYS5jZXIwKAYDVR0RBCEwH6QdMBsxGTAXBgNVBAMTEFRpbWVTdGFt
-# cC0yMDQ4LTYwHQYDVR0OBBYEFKUTAamfhcwbbhYeXzsxqnk2AHsdMB8GA1UdIwQY
-# MBaAFK9j1sqjToVy4Ke8QfMpojh/gHViMA0GCSqGSIb3DQEBCwUAA4IBAQBGnq/w
-# uKJfoplIz6gnSyHNsrmmcnBjL+NVKXs5Rk7nfmUGWIu8V4qSDQjYELo2JPoKe/s7
-# 02K/SpQV5oLbilRt/yj+Z89xP+YzCdmiWRD0Hkr+Zcze1GvjUil1AEorpczLm+ip
-# Tfe0F1mSQcO3P4bm9sB/RDxGXBda46Q71Wkm1SF94YBnfmKst04uFZrlnCOvWxHq
-# calB+Q15OKmhDc+0sdo+mnrHIsV0zd9HCYbE/JElshuW6YUI6N3qdGBuYKVWeg3I
-# RFjc5vlIFJ7lv94AvXexmBRyFCTfxxEsHwA/w0sUxmcczB4Go5BfXFSLPuMzW4IP
-# xbeGAk5xn+lmRT92MYICWjCCAlYCAQEwgYswdzELMAkGA1UEBhMCVVMxHTAbBgNV
-# BAoTFFN5bWFudGVjIENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBUcnVz
-# dCBOZXR3b3JrMSgwJgYDVQQDEx9TeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1waW5n
-# IENBAhB71OWvuswHP6EBIwQiQU0SMAsGCWCGSAFlAwQCAaCBpDAaBgkqhkiG9w0B
-# CQMxDQYLKoZIhvcNAQkQAQQwHAYJKoZIhvcNAQkFMQ8XDTIxMTAyMDE2MTE1NVow
-# LwYJKoZIhvcNAQkEMSIEIHsLAfzeovX0mQ6szk0WE4YIKDZK+5wipa3DvfcF4NEP
-# MDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIEIMR0znYAfQI5Tg2l5N58FMaA+eKCATz+
-# 9lPvXbcf32H4MAsGCSqGSIb3DQEBAQSCAQB8CH4cvgWXFZtAE4dLj7RljX9e7jEJ
-# 4xYHtoAXnbNlysj6s1FmZzsRD5OUIASlEmYCRxE2S1fHnnS3VJ7BhaUQVqi06Ixn
-# hIRvmMDbYpl63Q8+Hb+0KyQGTFNoFQYLP4OoAnjO8Y2fAcynePhBMLDKEt5oE1IH
-# dJm8jorkNx8cFVCeVTtOpA/G/jWHP4DQL7gTgPMRzoGjzTQWjSsfQc53fEXMPHBQ
-# 2Li0kVbWXoBaTyPx3zP5cOohGFrukyCjI4A4k8vBz8uiKSMpdIjQik8T0QA21ml7
-# HDxh9G2f4abzA2NNPLMNdYAdwsaEVJxPprgruIvTMjEV4CbxK1Srw4SF
+# AYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQxIgQgu/RrGVSVvMCt
+# mO4LpoesJc/wsdSRIf6iXPm/b9f0d44wDQYJKoZIhvcNAQEBBQAEggEAZ95HCuXe
+# EIC8uokOKhrpR6uj4tEaZvc7+kWeu/E7sTinI0aJW3lrHg5AIPOicEQC9t3XCODg
+# so4Mg4WZLeDZkteU3pjBs7tdmO2blkReGlpyTmH4p472BIR8jrAJA+ykzR/jDLgp
+# t9o6SHPnzTmX12IszE52O8Ibz6FiL2sb9l0O18JBtAzOI5bOSxLXko+Xm9sYGC79
+# PnEG/98k7oZWH/h6dwvjDYPhOYySulmIcR8mjAnCKTpjwd0DkBeR9o+L/Itbg2cH
+# uPcx/YDmXkXnpGkHcmtQKvfJRzmLpcFAbZzBkDZNVKSojQuDjRLW/z4lQzySPjZm
+# lwpL4EbU2sChJ6GCDiswgg4nBgorBgEEAYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEH
+# AqCCDgQwgg4AAgEDMQ0wCwYJYIZIAWUDBAIBMIH+BgsqhkiG9w0BCRABBKCB7gSB
+# 6zCB6AIBAQYLYIZIAYb4RQEHFwMwITAJBgUrDgMCGgUABBToM51Cm0dc3eCUe2UG
+# 54eYOFVuRgIUXqg/4s16R00IT9np0PTaulHcvA8YDzIwMjExMjE5MDgzMTMyWjAD
+# AgEeoIGGpIGDMIGAMQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29y
+# cG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNV
+# BAMTKFN5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzOgggqL
+# MIIFODCCBCCgAwIBAgIQewWx1EloUUT3yYnSnBmdEjANBgkqhkiG9w0BAQsFADCB
+# vTELMAkGA1UEBhMCVVMxFzAVBgNVBAoTDlZlcmlTaWduLCBJbmMuMR8wHQYDVQQL
+# ExZWZXJpU2lnbiBUcnVzdCBOZXR3b3JrMTowOAYDVQQLEzEoYykgMjAwOCBWZXJp
+# U2lnbiwgSW5jLiAtIEZvciBhdXRob3JpemVkIHVzZSBvbmx5MTgwNgYDVQQDEy9W
+# ZXJpU2lnbiBVbml2ZXJzYWwgUm9vdCBDZXJ0aWZpY2F0aW9uIEF1dGhvcml0eTAe
+# Fw0xNjAxMTIwMDAwMDBaFw0zMTAxMTEyMzU5NTlaMHcxCzAJBgNVBAYTAlVTMR0w
+# GwYDVQQKExRTeW1hbnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UECxMWU3ltYW50ZWMg
+# VHJ1c3QgTmV0d29yazEoMCYGA1UEAxMfU3ltYW50ZWMgU0hBMjU2IFRpbWVTdGFt
+# cGluZyBDQTCCASIwDQYJKoZIhvcNAQEBBQADggEPADCCAQoCggEBALtZnVlVT52M
+# cl0agaLrVfOwAa08cawyjwVrhponADKXak3JZBRLKbvC2Sm5Luxjs+HPPwtWkPhi
+# G37rpgfi3n9ebUA41JEG50F8eRzLy60bv9iVkfPw7mz4rZY5Ln/BJ7h4OcWEpe3t
+# r4eOzo3HberSmLU6Hx45ncP0mqj0hOHE0XxxxgYptD/kgw0mw3sIPk35CrczSf/K
+# O9T1sptL4YiZGvXA6TMU1t/HgNuR7v68kldyd/TNqMz+CfWTN76ViGrF3PSxS9TO
+# 6AmRX7WEeTWKeKwZMo8jwTJBG1kOqT6xzPnWK++32OTVHW0ROpL2k8mc40juu1MO
+# 1DaXhnjFoTcCAwEAAaOCAXcwggFzMA4GA1UdDwEB/wQEAwIBBjASBgNVHRMBAf8E
+# CDAGAQH/AgEAMGYGA1UdIARfMF0wWwYLYIZIAYb4RQEHFwMwTDAjBggrBgEFBQcC
+# ARYXaHR0cHM6Ly9kLnN5bWNiLmNvbS9jcHMwJQYIKwYBBQUHAgIwGRoXaHR0cHM6
+# Ly9kLnN5bWNiLmNvbS9ycGEwLgYIKwYBBQUHAQEEIjAgMB4GCCsGAQUFBzABhhJo
+# dHRwOi8vcy5zeW1jZC5jb20wNgYDVR0fBC8wLTAroCmgJ4YlaHR0cDovL3Muc3lt
+# Y2IuY29tL3VuaXZlcnNhbC1yb290LmNybDATBgNVHSUEDDAKBggrBgEFBQcDCDAo
+# BgNVHREEITAfpB0wGzEZMBcGA1UEAxMQVGltZVN0YW1wLTIwNDgtMzAdBgNVHQ4E
+# FgQUr2PWyqNOhXLgp7xB8ymiOH+AdWIwHwYDVR0jBBgwFoAUtnf6aUhHn1MS1cLq
+# BzJ2B9GXBxkwDQYJKoZIhvcNAQELBQADggEBAHXqsC3VNBlcMkX+DuHUT6Z4wW/X
+# 6t3cT/OhyIGI96ePFeZAKa3mXfSi2VZkhHEwKt0eYRdmIFYGmBmNXXHy+Je8Cf0c
+# kUfJ4uiNA/vMkC/WCmxOM+zWtJPITJBjSDlAIcTd1m6JmDy1mJfoqQa3CcmPU1dB
+# kC/hHk1O3MoQeGxCbvC2xfhhXFL1TvZrjfdKer7zzf0D19n2A6gP41P3CnXsxnUu
+# qmaFBJm3+AZX4cYO9uiv2uybGB+queM6AL/OipTLAduexzi7D1Kr0eOUA2AKTaD+
+# J20UMvw/l0Dhv5mJ2+Q5FL3a5NPD6itas5VYVQR9x5rsIwONhSrS/66pYYEwggVL
+# MIIEM6ADAgECAhB71OWvuswHP6EBIwQiQU0SMA0GCSqGSIb3DQEBCwUAMHcxCzAJ
+# BgNVBAYTAlVTMR0wGwYDVQQKExRTeW1hbnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UE
+# CxMWU3ltYW50ZWMgVHJ1c3QgTmV0d29yazEoMCYGA1UEAxMfU3ltYW50ZWMgU0hB
+# MjU2IFRpbWVTdGFtcGluZyBDQTAeFw0xNzEyMjMwMDAwMDBaFw0yOTAzMjIyMzU5
+# NTlaMIGAMQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRp
+# b24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5
+# bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzMwggEiMA0GCSqG
+# SIb3DQEBAQUAA4IBDwAwggEKAoIBAQCvDoqq+Ny/aXtUF3FHCb2NPIH4dBV3Z5Cc
+# /d5OAp5LdvblNj5l1SQgbTD53R2D6T8nSjNObRaK5I1AjSKqvqcLG9IHtjy1GiQo
+# +BtyUT3ICYgmCDr5+kMjdUdwDLNfW48IHXJIV2VNrwI8QPf03TI4kz/lLKbzWSPL
+# gN4TTfkQyaoKGGxVYVfR8QIsxLWr8mwj0p8NDxlsrYViaf1OhcGKUjGrW9jJdFLj
+# V2wiv1V/b8oGqz9KtyJ2ZezsNvKWlYEmLP27mKoBONOvJUCbCVPwKVeFWF7qhUhB
+# IYfl3rTTJrJ7QFNYeY5SMQZNlANFxM48A+y3API6IsW0b+XvsIqbAgMBAAGjggHH
+# MIIBwzAMBgNVHRMBAf8EAjAAMGYGA1UdIARfMF0wWwYLYIZIAYb4RQEHFwMwTDAj
+# BggrBgEFBQcCARYXaHR0cHM6Ly9kLnN5bWNiLmNvbS9jcHMwJQYIKwYBBQUHAgIw
+# GRoXaHR0cHM6Ly9kLnN5bWNiLmNvbS9ycGEwQAYDVR0fBDkwNzA1oDOgMYYvaHR0
+# cDovL3RzLWNybC53cy5zeW1hbnRlYy5jb20vc2hhMjU2LXRzcy1jYS5jcmwwFgYD
+# VR0lAQH/BAwwCgYIKwYBBQUHAwgwDgYDVR0PAQH/BAQDAgeAMHcGCCsGAQUFBwEB
+# BGswaTAqBggrBgEFBQcwAYYeaHR0cDovL3RzLW9jc3Aud3Muc3ltYW50ZWMuY29t
+# MDsGCCsGAQUFBzAChi9odHRwOi8vdHMtYWlhLndzLnN5bWFudGVjLmNvbS9zaGEy
+# NTYtdHNzLWNhLmNlcjAoBgNVHREEITAfpB0wGzEZMBcGA1UEAxMQVGltZVN0YW1w
+# LTIwNDgtNjAdBgNVHQ4EFgQUpRMBqZ+FzBtuFh5fOzGqeTYAex0wHwYDVR0jBBgw
+# FoAUr2PWyqNOhXLgp7xB8ymiOH+AdWIwDQYJKoZIhvcNAQELBQADggEBAEaer/C4
+# ol+imUjPqCdLIc2yuaZycGMv41UpezlGTud+ZQZYi7xXipINCNgQujYk+gp7+zvT
+# Yr9KlBXmgtuKVG3/KP5nz3E/5jMJ2aJZEPQeSv5lzN7Ua+NSKXUASiulzMub6KlN
+# 97QXWZJBw7c/hub2wH9EPEZcF1rjpDvVaSbVIX3hgGd+Yqy3Ti4VmuWcI69bEepx
+# qUH5DXk4qaENz7Sx2j6aescixXTN30cJhsT8kSWyG5bphQjo3ep0YG5gpVZ6DchE
+# WNzm+UgUnuW/3gC9d7GYFHIUJN/HESwfAD/DSxTGZxzMHgajkF9cVIs+4zNbgg/F
+# t4YCTnGf6WZFP3YxggJaMIICVgIBATCBizB3MQswCQYDVQQGEwJVUzEdMBsGA1UE
+# ChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0
+# IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcg
+# Q0ECEHvU5a+6zAc/oQEjBCJBTRIwCwYJYIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJ
+# AzENBgsqhkiG9w0BCRABBDAcBgkqhkiG9w0BCQUxDxcNMjExMjE5MDgzMTMyWjAv
+# BgkqhkiG9w0BCQQxIgQg6rYuFUKUzocMoBiGHoI7ZnM/pujuVvunwoHgtWXuYGow
+# NwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQgxHTOdgB9AjlODaXk3nwUxoD54oIBPP72
+# U+9dtx/fYfgwCwYJKoZIhvcNAQEBBIIBADC23nhJ6U2/RQKUIKpiNCANu0utUYoY
+# Ofdv2LDtfs4EIHxrQchAQyJOtrICEedY/f5uuc8Jf6kqdWGBuF8mmrVUiCllLWbn
+# TjolB0PiECBSsvGBfXGQtHNE9/STjU4A+ICzma7LvEzVgME2anakGJxx0KzOMTNY
+# xeD0y0qHxbUG5GDHPCRUVKQy7cd6n7oFifMG0oanYZDDBbdFfQv75TUkTHrHKhGD
+# CaT7YGZG2M1egdU+5Bll6QeaSUxy3mLHypmUj6lcTlmLWejhs58yEuN1vS1rIeVf
+# 1BDwt6vbeUtUnzzHtPIHQlGpYHb01F93MBYXL3/kkz9yJ9zGZ808rvU=
 # SIG # End signature block
