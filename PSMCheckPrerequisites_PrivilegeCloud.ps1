@@ -137,7 +137,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_PSMCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "28"
+[int]$versionNumber = "29"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -2390,6 +2390,7 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
         }
     
         Write-LogMessage -type Success -MSG "Begin checking connection elements, should take 10-40 sec."
+        $cleanupFromPreviousRuns = Start-Process -FilePath "$VaultOperationFolder\VaultOperationsTester.exe" -ArgumentList "$($creds.UserName) $($creds.GetNetworkCredential().Password) $VaultIP CleanUp" -WorkingDirectory "$VaultOperationFolder" -NoNewWindow -PassThru -Wait -RedirectStandardOutput $stdoutFile
         $process = Start-Process -FilePath "$VaultOperationFolder\VaultOperationsTester.exe" -ArgumentList "$($creds.UserName) $($creds.GetNetworkCredential().Password) $VaultIP" -WorkingDirectory "$VaultOperationFolder" -NoNewWindow -PassThru -Wait -RedirectStandardOutput $stdoutFile
         $creds = $null
         $stdout = (gc $stdoutFile)
@@ -2408,7 +2409,7 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
                 
                 Write-Host "-----------------------------------------"
                 Write-LogMessage -type Warning -MSG "1) More detailed log can be found here: $VaultOperationFolder\Log\Casos.Error.log"
-                Write-LogMessage -type Warning -MSG "3) Logs folder was zipped (Use for Support Case): `"$ZipToupload`""
+                Write-LogMessage -type Warning -MSG "3) Logs folder was zipped (Use for Support Case): `"$ZipToupload`".zip"
                 If($stdout -match "ITACM040S"){
                     Write-LogMessage -type Warning -MSG "3) Hint: Communication over 1858/TCP is required to utilize sticky session and maintain the same source IP for the duration of the session."
                 }
@@ -3092,8 +3093,8 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # SIG # Begin signature block
 # MIIgVgYJKoZIhvcNAQcCoIIgRzCCIEMCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCYAOrs9SMJe2Io
-# h1nxChRqPby5ASOTNRh8WaIH1OwQMaCCDmgwggboMIIE0KADAgECAhB3vQ4Ft1kL
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCB8krql1w1FW6q2
+# LxdtWuG8R8a4JBPr75vvsLMQxlW+C6CCDmgwggboMIIE0KADAgECAhB3vQ4Ft1kL
 # th1HYVMeP3XtMA0GCSqGSIb3DQEBCwUAMFMxCzAJBgNVBAYTAkJFMRkwFwYDVQQK
 # ExBHbG9iYWxTaWduIG52LXNhMSkwJwYDVQQDEyBHbG9iYWxTaWduIENvZGUgU2ln
 # bmluZyBSb290IFI0NTAeFw0yMDA3MjgwMDAwMDBaFw0zMDA3MjgwMDAwMDBaMFwx
@@ -3175,22 +3176,22 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # Q0MgUjQ1IEVWIENvZGVTaWduaW5nIENBIDIwMjACDBNEZb0DSVlpduXUfTANBglg
 # hkgBZQMEAgEFAKB8MBAGCisGAQQBgjcCAQwxAjAAMBkGCSqGSIb3DQEJAzEMBgor
 # BgEEAYI3AgEEMBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3
-# DQEJBDEiBCBHIww33AbCsaPnHmEZpuXn56X2upLcdg7CYBQs22SGPTANBgkqhkiG
-# 9w0BAQEFAASCAgBNfkK/DMA5Y5S/qrNVpEXs5LpV5qtMnkGRmRGxmlWrDnsBpEVu
-# RwT8QmXVGh2BbMwtLcIbpEfbzogwelr9tHPM1hiYOGd993R5UiDVikxeE0NyQeDw
-# 17F2JyT+BMpdfWZqfefV6DP9TWnyCrioyrmsucrrzJ/phGCr2hdZF/yNKibrzkk6
-# loLJqRDtaUi+doo0ny+fJXtHmC2CKbAzJl5OBGnpUIYGOh3I+UR5rpAKDlURrb9m
-# IQr8WlIJ7VHDCVFh3aGu3dadsSlZadproZ0m3dPaXnjitR5D1wAkxoi2AQKIPME1
-# 6W2GiaRDlrwPJOhf/EOGHSEHBim3i9pnQv8k/E9Dvg2Cn+A42WNz+/VVZgxHzOGu
-# rB8f8uXkwHlJR0486MNWtJWlj2RQkz5ENxbwOvkpUEIQrpPqRg4iIy8lMDJU/f1N
-# fWdhjZhsOcv67UEquC835BiEhvDILdcM40sSLjakBsCY+zUtpWel4fWr9Cd7a7Cs
-# 8nPjRgzVOojamZFOVb0aqQ/8gZ30IOUEggwAEci7tNkeW1pjM7OTCXfduOjUvLAS
-# Nes6bpYnhMAPrZrY0cqisa50jhOcYfxlUU9MJhD6Jcq1zMlCf+ZwE5lWnX/SEvuG
-# 2hs9n0D6NHvJCwG7Be9AIzkDQ5t9KYqsKrf2Kfkhk4MW46EURGVcB2018qGCDisw
+# DQEJBDEiBCALuiMj39wzypSbPSPER6LCcqs/yU/atDYoFKJLyrrk3zANBgkqhkiG
+# 9w0BAQEFAASCAgBj4c6CtAYaOM3H1bCtBmT+ZpQmPl9hn1MA7fTrL1Gsm7RXBCxx
+# FsUscHWUwjNNojbrvV8wtXNOW3qPVHznXv3thCiIyl6m1TI1ZszaJM55pfRtF0Rp
+# QyIgOyNx3BEjHzRhb0n8X1n9KUtF/YEPIqMoBtR3+6t+GuNaKkoZjTK6SEz6VRbW
+# gDLJsqlmkwwieWH7bmnxAIMhV61EF1uMjHiVCe9BY4v4C4WCf8ibC3xaNsXti2n7
+# k7i+Y/WChElYqVO0ZrTK98Na3FZ1NzWDy333vdmUpOJ9LI7EuncW5GK4AHUCz/9W
+# tMSRQ983TNVnrJhjmrTBXD2glqmfLIC405SUuKQyRBBtgnH4FBD49jFG6C+qeJzw
+# eYLEaFZMupqCYbBVNKu86VlRdaBJnebfY6exKsgEpZkKhHEfad2bqQXGeNiigpVG
+# ftHFkoMqPu6nVeNJsN+3xczLukYfE+EBnPyDhGkmWIg7sqQd1eF9WzsjQXlakJ3n
+# i1CuVWREXykPmUeJr0BZgj+XDAl1dGMzI+TWAiWcmVy8ZW3FUSraXhhIJzRsYYBE
+# /PNkgb1XmCBF6ujpT6nm8dS2evYmzo/8CtmlF2QKuY6752ix5f2PmYL9wizLMzlo
+# B+tjwW/Dso3GbHBgUZ5JaLlEdkKbQqxPmReUfEC34mmqZaPBIIV3HRgV86GCDisw
 # gg4nBgorBgEEAYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEHAqCCDgQwgg4AAgEDMQ0w
 # CwYJYIZIAWUDBAIBMIH+BgsqhkiG9w0BCRABBKCB7gSB6zCB6AIBAQYLYIZIAYb4
-# RQEHFwMwITAJBgUrDgMCGgUABBTFzYUvONZmfr8iCHJaTHTTTdGleAIUWpEz0q+A
-# 6/avccFfbMkiQ/qRVLcYDzIwMjIwMTI0MDMxNjI0WjADAgEeoIGGpIGDMIGAMQsw
+# RQEHFwMwITAJBgUrDgMCGgUABBTP8ZrPnicaWFFGVjqLk0A+/B1r3QIURWGRJIIf
+# fnWd3uK9kViRKYDXozkYDzIwMjIwMjAzMTY1MjExWjADAgEeoIGGpIGDMIGAMQsw
 # CQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNV
 # BAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNI
 # QTI1NiBUaW1lU3RhbXBpbmcgU2lnbmVyIC0gRzOgggqLMIIFODCCBCCgAwIBAgIQ
@@ -3254,13 +3255,13 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # cG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNV
 # BAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0ECEHvU5a+6zAc/oQEj
 # BCJBTRIwCwYJYIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRAB
-# BDAcBgkqhkiG9w0BCQUxDxcNMjIwMTI0MDMxNjI0WjAvBgkqhkiG9w0BCQQxIgQg
-# Gl2ivL9HMQbltGlgz7c1CQAgBMIFvKDMB19yWKYlgtgwNwYLKoZIhvcNAQkQAi8x
+# BDAcBgkqhkiG9w0BCQUxDxcNMjIwMjAzMTY1MjExWjAvBgkqhkiG9w0BCQQxIgQg
+# meU1nb7yA+If0KnhveKl82OOOj028cyGpppnc20Tn3MwNwYLKoZIhvcNAQkQAi8x
 # KDAmMCQwIgQgxHTOdgB9AjlODaXk3nwUxoD54oIBPP72U+9dtx/fYfgwCwYJKoZI
-# hvcNAQEBBIIBAAQFR1u0vjbicFxFeRm6CxOxmUYU55dMJgIHmF1KUx+UuXB3wCvb
-# //h+4otJGtfNlRliZAf2Q2jujdpOlTuCyB4kIJshT+pFwHcEQnUvYiBKvGB27h/G
-# MYMu2TCr43S55oSv9upUJPvx09G9BztzaF3IS87OboDUxNLZSgl7H7H37yU/Zy+2
-# 8+ep+A6xelp/UahZetTQrOwAK/Z5+x5xRS8GjDeva5sNXAYrVvSS9zJTL+3Lqa4C
-# cpIfXbYoQbpe4sy1gm4fdUpj6lNQtyWxCVU9PB4ZlYJ0FTe2XTIBKosvz0wVMGf1
-# qJCjPelIpSrKoZKn3kCam+o5nX22K/EgBlg=
+# hvcNAQEBBIIBAEFhS15wSYD/2zwweEKsEZWFnXAOOYHJ1oc6ExXZCQuk3qXykBnZ
+# UXOBnGD6t9XyKTwYqZbkRRORkcd4BioRYBoaFRk/Z1P4c4h0yLpCniyNoAuGucIX
+# JrhRoUBxmDxdPlozVaZgi7MXSn0LVNGmN7YXDehPD2bFmaAcWETtF+Vom1kANktY
+# ovL7Blr8xiQiWLtVrqtsSSP07OjPEpjFGcbUKXBAt/8oLZEqlBsUMgXN2J1lbiPE
+# SMKiSyGkVora8v9algREOjoBRjPMkHFZqtY1odHEeeNY982YFI2xohmwYoW4huxe
+# sIM/yt7/9z7UxBE57UTeE4eERJtZQciY+xY=
 # SIG # End signature block
