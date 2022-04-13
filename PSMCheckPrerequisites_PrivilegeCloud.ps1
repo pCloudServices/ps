@@ -138,7 +138,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_PSMCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "30"
+[int]$versionNumber = "31"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -2363,7 +2363,7 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
             $parameters += @{FirstCPMConnectionTest = $True}
             $parameters | Export-CliXML -Path $CONFIG_PARAMETERS_FILE -NoClobber -Encoding ASCII -Force
             Write-LogMessage -type Info -MSG "** Since this is first time executing script, let's also run CPM Connection Install Test **"
-            Write-LogMessage -type Info -MSG "** You will need to provide your Privilege Cloud Admin User/Pass (Typically <subdomain>_admin account). **"
+            Write-LogMessage -type Info -MSG "** You will need to provide your Privilege Cloud Install Username and Password. **"
             #Ask if User wants to perform the test, subsequent runs won't show this question, you can only trigger this from Troubleshooting or -Switch.
             $decisionCPM = Get-Choice -Title "Run CPM Install Connection test?" -Options "Yes (Recommended)", "No" -DefaultChoice 1
                 if ($decisionCPM -eq "No")
@@ -2411,14 +2411,14 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
         Write-LogMessage -type Info -MSG "Begin CPM Connection Install Test"
         #Check if we can pull the Vault IP from the .ini file, otherwise prompt for it.
         if($parameters.VaultIP -eq $null){
-            $VaultIP = Read-Host "Please enter your Vault IP Address"
+            $VaultIP = Read-Host "Please enter your Vault Address"
         }
         Else{
             $VaultIP = $parameters.VaultIP
         }
         #Get Credentials
-        Write-LogMessage -type Info -MSG "Enter Privilege Cloud PVWA Admin Credentials"
-        $creds = Get-Credential -Message "Enter Privilege Cloud PVWA Admin Credentials"
+        Write-LogMessage -type Info -MSG "Enter Privilege Cloud Install User Credentials"
+        $creds = Get-Credential -Message "Enter Privilege Cloud Install User Credentials"
         #Check pw doesn't contain illegal char, otherwise installation will fail
         [string]$illegalchars = '\/<>{}''&"$*@`|'
         $pwerror = $null
@@ -2428,7 +2428,7 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
         }
         foreach($char in $illegalchars.ToCharArray()){
             if ($($creds.GetNetworkCredential().Password).ToCharArray() -contains $char){
-                Write-Host "illegel char detected $char" -ForegroundColor Red
+                Write-Host "illegal char detected $char" -ForegroundColor Red
                 $pwerror = $true
             }
         }
@@ -2495,19 +2495,19 @@ param
 	[Parameter(ParameterSetName='Regular',Mandatory=$true)]
 	[AllowEmptyString()]
 	[Alias("VaultIP")]
-	[String]${Please enter your Vault IP Address (Or leave empty)},
+	[String]${Please enter your Vault Address (Or leave empty)},
 	# Get the Tunnel IP
 	[Parameter(ParameterSetName='Regular',Mandatory=$true)]
 	[AllowEmptyString()]
 	[Alias("TunnelIP")]
-	[String]${Please enter your Tunnel Connector IP Address (Or leave empty)},
+	[String]${Please enter your Tunnel Connector Address (Or leave empty)},
 	# Get the Portal URL
 	[Parameter(ParameterSetName='Regular',Mandatory=$true, HelpMessage="Example: https://<customerDomain>.privilegecloud.cyberark.com")]
 	[AllowEmptyString()]
 	[Alias("PortalURL")]
 	[ValidateScript({
 		If(![string]::IsNullOrEmpty($_)) {
-			$_ -like "*.privilegecloud.cyberark.com*"
+			($_ -like "*.privilegecloud.cyberark.com*") -or ($_ -like "*.cyberark.cloud*")
 		}
 		Else { $true }
 	})]
@@ -2525,8 +2525,8 @@ param
 	 If([string]::IsNullOrEmpty($ConfigFile))
 	 {
 		 # ------ Copy parameter values entered ------
-		$script:VaultIP = ${Please enter your Vault IP Address (Or leave empty)}
-		$script:TunnelIP = ${Please enter your Tunnel Connector IP Address (Or leave empty)}
+		$script:VaultIP = ${Please enter your Vault Address (Or leave empty)}
+		$script:TunnelIP = ${Please enter your Tunnel Connector Address (Or leave empty)}
 		$script:PortalURL = ${Please enter your provided portal URL Address (Or leave empty)}#Example: https://<customerDomain>.privilegecloud.cyberark.com	
         $script:CustomerId = ${Please enter your CustomerId (Or leave empty)}
 		# Create the Config file for next use
@@ -3148,8 +3148,8 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # SIG # Begin signature block
 # MIIgTgYJKoZIhvcNAQcCoIIgPzCCIDsCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCC8oFJ3QyMjfbVT
-# vyCIyG3oK3Fl3dO9JZ2RWXAlUthdr6CCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAXTdd0SL7z/Ono
+# WKTotK5uuKsxsmzZFatgWx/ZF2gqmaCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
 # th1HYVMeP3XtMA0GCSqGSIb3DQEBCwUAMFMxCzAJBgNVBAYTAkJFMRkwFwYDVQQK
 # ExBHbG9iYWxTaWduIG52LXNhMSkwJwYDVQQDEyBHbG9iYWxTaWduIENvZGUgU2ln
 # bmluZyBSb290IFI0NTAeFw0yMDA3MjgwMDAwMDBaFw0zMDA3MjgwMDAwMDBaMFwx
@@ -3230,23 +3230,23 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # R2xvYmFsU2lnbiBudi1zYTEyMDAGA1UEAxMpR2xvYmFsU2lnbiBHQ0MgUjQ1IEVW
 # IENvZGVTaWduaW5nIENBIDIwMjACDHBNxPwWOpXgXVV8DDANBglghkgBZQMEAgEF
 # AKB8MBAGCisGAQQBgjcCAQwxAjAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEE
-# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDn
-# pujexQdao0LfKB6anf5z1l28ydItVovziNmG/fN73zANBgkqhkiG9w0BAQEFAASC
-# AgDNaMmE+kZSFcCyYtfSZvtVfLnG4AZC/4KVDxHexQ831vEzMf2x00UOuPLNc/sk
-# 48iSf30sxvzww7aibqCYT9YrEgfBVbKddgo1ZDvCpTADD/eLqUA6Vh1i7bv4FH/Z
-# HL0uiGAg1HUSyWRGoRizzKVd/K2JyWduBcXwm4vsjvhiBxxOQgUSIeEgf4oCnoQQ
-# m5gkuSHP4FBYV2jAYrgU2ZmMKt2qlt3qGH8m2HP6lIyhKhFgCRQ0NszRxiHhWyd9
-# lamxfsWYdJipjjyIUzc+5Z1SZczx9hqjNGSN/Ord8cx5fpvgUU1ZKMRWYN6Cr88J
-# 2ku+aqXypQjLNy3Q6usk1S8+b78dk22r6VeEzvW2UrhD1CQRGEnJUC00MsGXJ4Nm
-# ohvfsEE3lHa2VK0pKFDEwhXkJzqmI/0Gl8gehsePq0/4uGWxRqNz2qILEFWoNfWL
-# 3joQA9EpkcAN4jmbu5qGSbM+l0HkJe3ZV1FMiSoDeSvc5QHpvy5UPnT6zcQszb/i
-# ydTs3fnO8AKis/4dexT/cv649T3nBtqdG0E8bVR9XHWgybjWSY9ySSLkiIjmuTsF
-# 1YWfBuM4lmV56nOe/oX8eOsmHeR4J/5LJJQMiHURduzyxlf8vuqEDVsqa/HtDnci
-# M8F3igQmoyD949px2kJYtHsMeZjxR1W75uU4qU33WhKwsKGCDiwwgg4oBgorBgEE
+# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDo
+# j1fiZMYBHWUjBrHBtC1U0aAczdAB+wutTye18+BuLDANBgkqhkiG9w0BAQEFAASC
+# AgCxi3tVdH/oF+eicR1D+dBPz2N6YrI58UzjyrROj7gopuQl3uT/BhJ/g8kRHnHQ
+# SpyLOAY9P2Yu+WR1t6jtwpV54gxQ583ZzvzQlMFBcoiHzE2ZeEvLRmEAID4c//AU
+# n2gU0dmgfhOxAtnAYirfU81iHqHKLFP+3NiEk/J1vC63Yndhm7hU3cgsxaxmPKOy
+# QdUTWczVh1RDdIEXAqwP5nIzHVVri2tefP+Qld8k2Ktf/kPJ0UM1s0CbpolQ/3XL
+# 4KCp1e3HJgS1E4VR4LxXBq+iZPj/iXiIRRkMv5WGMypR9XHVzT152Eky7DaA0BIP
+# 5BHTpzFfmUAKZN22+CsyszEI23fB4pNdlLJXcYOm3vYPEBg7SjqgbsfHVhzKnrh2
+# 1dMdpX1Rwopq60+svIq9lgHw/KA3u3P4tfbzsm3CcGPMOZGSm4pj+1nRAiDJ6r2s
+# iwMMQHIOnFYKLFzdLqcAHf51qHFhwXtUY052cnmCIfpYJ+Z2uKuAfgYgo6800et7
+# V22Fa9Xb+A1SHUGdjPVqTM7tejTcxyJU/KVWDRnl0Rm5mmVD5EKhSCgOcrP3lr2D
+# zGy/AIebRzJyftt0dT2OVqxpwTVY3QDHRjDtcocuS51oLnwqC1dkNxPkyjL50Su6
+# YXRGtO2zC5Qgp4h6cY0T7b50ZTGD5/Li/FAQVbde3aVGoaGCDiwwgg4oBgorBgEE
 # AYI3AwMBMYIOGDCCDhQGCSqGSIb3DQEHAqCCDgUwgg4BAgEDMQ0wCwYJYIZIAWUD
 # BAIBMIH/BgsqhkiG9w0BCRABBKCB7wSB7DCB6QIBAQYLYIZIAYb4RQEHFwMwITAJ
-# BgUrDgMCGgUABBQFPZ4+Gbu+aydMJt50KplIXF1zBQIVAL/lHs92GzQ6Jnl/O1YW
-# 74AY9KF6GA8yMDIyMDMwMjE0MDQwOVowAwIBHqCBhqSBgzCBgDELMAkGA1UEBhMC
+# BgUrDgMCGgUABBQ8rikcOQZFTky2fVUrEk9SKv1LCgIVAN5pHxJLwor2YwB1XTmi
+# gK5D5P2/GA8yMDIyMDQxMzA3MzUzNFowAwIBHqCBhqSBgzCBgDELMAkGA1UEBhMC
 # VVMxHTAbBgNVBAoTFFN5bWFudGVjIENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1h
 # bnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYDVQQDEyhTeW1hbnRlYyBTSEEyNTYgVGlt
 # ZVN0YW1waW5nIFNpZ25lciAtIEczoIIKizCCBTgwggQgoAMCAQICEHsFsdRJaFFE
@@ -3310,13 +3310,13 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # MR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMSgwJgYDVQQDEx9TeW1h
 # bnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIENBAhB71OWvuswHP6EBIwQiQU0SMAsG
 # CWCGSAFlAwQCAaCBpDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcNAQkQAQQwHAYJKoZI
-# hvcNAQkFMQ8XDTIyMDMwMjE0MDQwOVowLwYJKoZIhvcNAQkEMSIEIAE2Giz2o+E6
-# zF4tlfc9rqDnq6++kE0WvYUGYwqLCroUMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIE
+# hvcNAQkFMQ8XDTIyMDQxMzA3MzUzNFowLwYJKoZIhvcNAQkEMSIEIA+Oa1gr7lrV
+# YHaDPLz1z2jg0rMx6Tsv4CVyAPzSG+JMMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIE
 # IMR0znYAfQI5Tg2l5N58FMaA+eKCATz+9lPvXbcf32H4MAsGCSqGSIb3DQEBAQSC
-# AQBP9l2EZtyN1vJHmTTATLKkRrJyIbA45QoY2KjcpFI4TmaAKex0WFBZy2y6UmQb
-# 6QPeGZFfzwUTKsmkQ85vhZa3VVxbjmsFOBXMpLhIEKY+3Ba5ZUgL7Z0+AmY11t8D
-# 2NAreZdZk7/M7a19+hYprVcSTB2vkr3TWHC1JXeUsjBSTKZtqaqpt5nF3BDfbnSk
-# Zp9ki4J9TSLi0u28JsMNR/Pe5O18YKdcHCS54E46TxuW7nXwzc450zLgFPoPysvC
-# BDGVBs1fOP4PZt6jZYNSm6tkVUDcu+JSwypmNlFrD7A6RRbPqIJhhRDeXktxwhsB
-# tbKoZ3n7oL2CX2xXAu8mIpsO
+# AQB4vQo1mEC+ciSkVqbg1D8qnG3eu4X3MbTouL1lC9YWWUjniH53yOIuXYFtdjBy
+# D7bxsxhqx9GwYkBSoB0fpTdPv71PggECnToSRIwk9my7zHciOMtc0wMGqXdFbdC4
+# Pb6+U63FWz21PQZfSMLYrS/2AhRE2HD3B1LQjwzlyBgKIC6ffX5mN43E5O1glYG6
+# QjdiqweabhCSa1yjuAFY+tgahhrlYxcOLWdjdj8UfYf8GsiV8ybc5pJVw+9FB63e
+# tEsM/aT/3r/8+POw3tPhMeZOUow+IHGfJwSM8nQCGDvawEW6t57/eVcO62mZmnKF
+# Cmw6WZJ2ZuS5EnBZQ4YUB305
 # SIG # End signature block
