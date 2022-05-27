@@ -17,6 +17,8 @@
   .PARAMETER OutOfDomain
   .PARAMETER POC
   .PARAMETER Troubleshooting
+  .PARAMETER SkipVersionCheck
+  .PARAMETER SkipIPCheck
  
   .EXAMPLE 
   PS C:\> .\PSMCheckPrerequisites.ps1
@@ -29,6 +31,9 @@
   
   .EXAMPLE - Run in POC mode
   PS C:\> .\PSMCheckPrerequisites.ps1 -POC
+
+  .EXAMPLE - Skip Online Checks
+  PS C:\> .\PSMCheckPrerequisites.ps1 -SkipVersionCheck -SkipIPCheck
   
 #>
 [CmdletBinding(DefaultParameterSetName="Regular")]
@@ -44,7 +49,12 @@ param(
 	[switch]$Troubleshooting,
 	# Use this switch to check CPM Install Connection Test
 	[Parameter(ParameterSetName='CPMConnectionTest',Mandatory=$false)]
-	[switch]$CPMConnectionTest
+	[switch]$CPMConnectionTest,
+    # Use this switch to skip online checks
+    [Parameter(ParameterSetName='regular',Mandatory=$false)]
+    [switch]$SkipVersionCheck,
+    [Parameter(ParameterSetName='regular',Mandatory=$false)]
+    [switch]$SkipIPCheck
 )
 
 # ------ SET Script Prerequisites ------
@@ -138,7 +148,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_PSMCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "31"
+[int]$versionNumber = "32"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -1641,6 +1651,7 @@ Function VaultConnectivity
 	[OutputType([PsCustomObject])]
 	param ()
 	Write-LogMessage -Type Verbose -Msg "Runing VaultConnectivity"
+    $script:VaultConnectivityOK = $false
 	return Test-NetConnectivity -ComputerName $VaultIP -Port 1858
 }
 
@@ -1961,14 +1972,22 @@ Function SQLServerPermissions
 					if ($admin -like "*S-1-5-32-544*")
 					{
 						Write-LogMessage -Type Verbose -Msg "$sec group policy has Local Administrators access"
-						$actual = $result = $True
+						$actual = $True
+                        $result = $True
 					}
 					else
 					{
 						Write-LogMessage -Type Verbose -Msg "No Local Administrators access for $sec group policy"
-						$actual = $result = $False
-						$errorMsg = "Missing administrators in Group Policy: " + $SecPolGPO[$sec]
+						$actual = $False
+                        $result = $False
+                        $errorMsg = "Missing administrators in Group Policy: " + $SecPolGPO[$sec]
+                        $missingGroup = $true
 					}
+                 # if even one of the groups was missing we need to declare final error as RED.
+                 if($missingGroup){
+                    $actual = $False
+                    $result = $False
+                 }
 				}
 			}
 		}
@@ -2127,7 +2146,11 @@ Function Test-NetConnectivity
 					$errorMsg = "Network connectivity failed, check FW rules to '$ComputerName' on port '$Port' are allowed"
 					$result = $False
 				}
-				Else { $result = $True }
+				Else { 
+                     $result = $True
+                     # if port 1858, indicating vault test, declate param so we can use it in CPMConnectionTest.
+                     if($port -eq 1858){$script:VaultConnectivityOK = $True}
+                     }
 			}
 			Else
 			{
@@ -2353,7 +2376,7 @@ $stdoutFile = "$VaultOperationFolder\Log\stdout.log"
 $LOG_FILE_PATH_CasosArchive = "$VaultOperationFolder\Log\old"
 $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
 
-        #If script is ran for the first time, we perform this check and mark it down, afterwards we will skip this, and it an be ran from -Troubleshooting or with A Switch.
+        #If script ran for the first time, we perform this check and mark it down, afterwards we will skip this, and it can be ran from -Troubleshooting or with A Switch.
         $parameters = Try{Import-CliXML -Path $CONFIG_PARAMETERS_FILE}catch{Write-LogMessage -type Info -MSG "$($_.exception.message)" -Early}
     
         #If $parameters is empty, the initial script was never run or errored out, thus we skip straight to the test without the introduction.
@@ -2362,7 +2385,7 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
             Remove-Item -Path $CONFIG_PARAMETERS_FILE
             $parameters += @{FirstCPMConnectionTest = $True}
             $parameters | Export-CliXML -Path $CONFIG_PARAMETERS_FILE -NoClobber -Encoding ASCII -Force
-            Write-LogMessage -type Info -MSG "** Since this is first time executing script, let's also run CPM Connection Install Test **"
+            Write-LogMessage -type Info -MSG "** Since Vault Connectivity test passed, let's also run CPM Connection Install Test **"
             Write-LogMessage -type Info -MSG "** You will need to provide your Privilege Cloud Install Username and Password. **"
             #Ask if User wants to perform the test, subsequent runs won't show this question, you can only trigger this from Troubleshooting or -Switch.
             $decisionCPM = Get-Choice -Title "Run CPM Install Connection test?" -Options "Yes (Recommended)", "No" -DefaultChoice 1
@@ -3015,16 +3038,16 @@ $t = @"
 
 for ($i=0;$i -lt $t.length;$i++) {
 if ($i%2) {
- $c = "blue"
+ $c = "yellow"
 }
 elseif ($i%5) {
- $c = "gray"
+ $c = "magenta"
 }
 elseif ($i%7) {
  $c = "red"
 }
 else {
-   $c = "green"
+   $c = "yellow"
 }
 write-host $t[$i] -NoNewline -ForegroundColor $c
 }
@@ -3041,7 +3064,6 @@ if($psISE -ne $null){
     Pause
     Exit
 }
-
 
 $Host.UI.RawUI.WindowTitle = "Privilege Cloud Prerequisites Check"
 
@@ -3074,8 +3096,12 @@ if ($CPMConnectionTest){CPMConnectionTest}
 else
 {
 	try {
-		Write-LogMessage -Type Info -Msg "Checking for latest version" -Early
-		Test-VersionUpdate	# Check the latest version
+        # Check the latest version
+		if(! $SkipVersionCheck){
+            Write-LogMessage -Type Info -Msg "Checking for latest version" -Early
+            Test-VersionUpdate 
+        }
+        Else{ Write-LogMessage -Type Info -Msg "Skipped version check" -Early }
 	} catch {
 		Write-LogMessage -Type Error -Msg "Failed to check for latest version - Skipping. Error: $(Collect-ExceptionMessage $_.Exception)"
 	}
@@ -3088,7 +3114,7 @@ else
 		}
 		else
 		{
-            #In case customer placed ConnectionDetails.txt file in the same folder we can grab all the values from it from it.
+            #In case customer placed ConnectionDetails.txt file in the same folder we can grab all the values from it.
             Write-LogMessage -type Info -MSG "Checking if ConnectionDetails.txt file exist so we can fetch values from there instead of manually typing them." -Early
             $ConnectionDetailsFile = "$PSScriptRoot\*ConnectionDetails.txt"    
             if (Test-Path $ConnectionDetailsFile){
@@ -3128,13 +3154,19 @@ else
         Write-LogMessage -type Error -MSG "Failed to Prompt user for input - Skipping. Error: $(Collect-ExceptionMessage $_.Exception)"
     }    
 	try {
-		Write-LogMessage -Type Verbose -Msg $(GetPublicIP)# Retrieve public IP and save it locally
+        # Retrieve public IP and save it locally
+        if(! $SkipIPCheck){
+		    Write-LogMessage -Type Verbose -Msg $(GetPublicIP)
+        }
+        Else{ Write-LogMessage -Type Info -Msg "Skipped Online IP check" -Early }
 	} catch {
 		Write-LogMessage -Type Error -Msg "Failed to retrieve public IP - Skipping. Error: $(Collect-ExceptionMessage $_.Exception)"
 	}
-	try {	
-		CheckPrerequisites  							# Main Pre-requisites check
-        CPMConnectionTest
+	try {
+        # Main Pre-requisites check
+		CheckPrerequisites
+        # If VaultConnectivity passed, run CPM Test.
+        if($VaultConnectivityOK -eq $true){CPMConnectionTest}
 	} catch	{
 		Write-LogMessage -Type Error -Msg "Checking prerequisites failed. Error(s): $(Collect-ExceptionMessage $_.Exception)"
 	}
@@ -3144,12 +3176,11 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # Main end
 ###########################################################################################	
 #endregion
-
 # SIG # Begin signature block
-# MIIgTgYJKoZIhvcNAQcCoIIgPzCCIDsCAQExDzANBglghkgBZQMEAgEFADB5Bgor
+# MIIgTQYJKoZIhvcNAQcCoIIgPjCCIDoCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAXTdd0SL7z/Ono
-# WKTotK5uuKsxsmzZFatgWx/ZF2gqmaCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCCbUHXllp3shYZy
+# y9ihU7RjGB9FJtJtcODDj2oI+aUNkKCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
 # th1HYVMeP3XtMA0GCSqGSIb3DQEBCwUAMFMxCzAJBgNVBAYTAkJFMRkwFwYDVQQK
 # ExBHbG9iYWxTaWduIG52LXNhMSkwJwYDVQQDEyBHbG9iYWxTaWduIENvZGUgU2ln
 # bmluZyBSb290IFI0NTAeFw0yMDA3MjgwMDAwMDBaFw0zMDA3MjgwMDAwMDBaMFwx
@@ -3226,97 +3257,97 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # l418MFn4EPQUqxB51SMihIcyqu6+3qOlco8Dsy1y0gC0Hcx+unDZPsN8k+rhueN2
 # HXrPkAJ2bsEJd7adPy423FKbA7bRCOc6dWOFH1OGANfEG0Rjw9RfcsI84OkKpQ7R
 # XldpKIcWuaYMlfYzsl+P8dJru+KgA8Vh7GTVb5USzFGeMyOMtyr1/L2bIyRVSiLL
-# 8goMl4DTDOWeMYIRRTCCEUECAQEwbDBcMQswCQYDVQQGEwJCRTEZMBcGA1UEChMQ
+# 8goMl4DTDOWeMYIRRDCCEUACAQEwbDBcMQswCQYDVQQGEwJCRTEZMBcGA1UEChMQ
 # R2xvYmFsU2lnbiBudi1zYTEyMDAGA1UEAxMpR2xvYmFsU2lnbiBHQ0MgUjQ1IEVW
 # IENvZGVTaWduaW5nIENBIDIwMjACDHBNxPwWOpXgXVV8DDANBglghkgBZQMEAgEF
 # AKB8MBAGCisGAQQBgjcCAQwxAjAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEE
-# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCDo
-# j1fiZMYBHWUjBrHBtC1U0aAczdAB+wutTye18+BuLDANBgkqhkiG9w0BAQEFAASC
-# AgCxi3tVdH/oF+eicR1D+dBPz2N6YrI58UzjyrROj7gopuQl3uT/BhJ/g8kRHnHQ
-# SpyLOAY9P2Yu+WR1t6jtwpV54gxQ583ZzvzQlMFBcoiHzE2ZeEvLRmEAID4c//AU
-# n2gU0dmgfhOxAtnAYirfU81iHqHKLFP+3NiEk/J1vC63Yndhm7hU3cgsxaxmPKOy
-# QdUTWczVh1RDdIEXAqwP5nIzHVVri2tefP+Qld8k2Ktf/kPJ0UM1s0CbpolQ/3XL
-# 4KCp1e3HJgS1E4VR4LxXBq+iZPj/iXiIRRkMv5WGMypR9XHVzT152Eky7DaA0BIP
-# 5BHTpzFfmUAKZN22+CsyszEI23fB4pNdlLJXcYOm3vYPEBg7SjqgbsfHVhzKnrh2
-# 1dMdpX1Rwopq60+svIq9lgHw/KA3u3P4tfbzsm3CcGPMOZGSm4pj+1nRAiDJ6r2s
-# iwMMQHIOnFYKLFzdLqcAHf51qHFhwXtUY052cnmCIfpYJ+Z2uKuAfgYgo6800et7
-# V22Fa9Xb+A1SHUGdjPVqTM7tejTcxyJU/KVWDRnl0Rm5mmVD5EKhSCgOcrP3lr2D
-# zGy/AIebRzJyftt0dT2OVqxpwTVY3QDHRjDtcocuS51oLnwqC1dkNxPkyjL50Su6
-# YXRGtO2zC5Qgp4h6cY0T7b50ZTGD5/Li/FAQVbde3aVGoaGCDiwwgg4oBgorBgEE
-# AYI3AwMBMYIOGDCCDhQGCSqGSIb3DQEHAqCCDgUwgg4BAgEDMQ0wCwYJYIZIAWUD
-# BAIBMIH/BgsqhkiG9w0BCRABBKCB7wSB7DCB6QIBAQYLYIZIAYb4RQEHFwMwITAJ
-# BgUrDgMCGgUABBQ8rikcOQZFTky2fVUrEk9SKv1LCgIVAN5pHxJLwor2YwB1XTmi
-# gK5D5P2/GA8yMDIyMDQxMzA3MzUzNFowAwIBHqCBhqSBgzCBgDELMAkGA1UEBhMC
-# VVMxHTAbBgNVBAoTFFN5bWFudGVjIENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1h
-# bnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYDVQQDEyhTeW1hbnRlYyBTSEEyNTYgVGlt
-# ZVN0YW1waW5nIFNpZ25lciAtIEczoIIKizCCBTgwggQgoAMCAQICEHsFsdRJaFFE
-# 98mJ0pwZnRIwDQYJKoZIhvcNAQELBQAwgb0xCzAJBgNVBAYTAlVTMRcwFQYDVQQK
-# Ew5WZXJpU2lnbiwgSW5jLjEfMB0GA1UECxMWVmVyaVNpZ24gVHJ1c3QgTmV0d29y
-# azE6MDgGA1UECxMxKGMpIDIwMDggVmVyaVNpZ24sIEluYy4gLSBGb3IgYXV0aG9y
-# aXplZCB1c2Ugb25seTE4MDYGA1UEAxMvVmVyaVNpZ24gVW5pdmVyc2FsIFJvb3Qg
-# Q2VydGlmaWNhdGlvbiBBdXRob3JpdHkwHhcNMTYwMTEyMDAwMDAwWhcNMzEwMTEx
-# MjM1OTU5WjB3MQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9y
-# YXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNVBAMT
-# H1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0EwggEiMA0GCSqGSIb3DQEB
-# AQUAA4IBDwAwggEKAoIBAQC7WZ1ZVU+djHJdGoGi61XzsAGtPHGsMo8Fa4aaJwAy
-# l2pNyWQUSym7wtkpuS7sY7Phzz8LVpD4Yht+66YH4t5/Xm1AONSRBudBfHkcy8ut
-# G7/YlZHz8O5s+K2WOS5/wSe4eDnFhKXt7a+Hjs6Nx23q0pi1Oh8eOZ3D9Jqo9ITh
-# xNF8ccYGKbQ/5IMNJsN7CD5N+Qq3M0n/yjvU9bKbS+GImRr1wOkzFNbfx4Dbke7+
-# vJJXcnf0zajM/gn1kze+lYhqxdz0sUvUzugJkV+1hHk1inisGTKPI8EyQRtZDqk+
-# scz51ivvt9jk1R1tETqS9pPJnONI7rtTDtQ2l4Z4xaE3AgMBAAGjggF3MIIBczAO
-# BgNVHQ8BAf8EBAMCAQYwEgYDVR0TAQH/BAgwBgEB/wIBADBmBgNVHSAEXzBdMFsG
-# C2CGSAGG+EUBBxcDMEwwIwYIKwYBBQUHAgEWF2h0dHBzOi8vZC5zeW1jYi5jb20v
-# Y3BzMCUGCCsGAQUFBwICMBkaF2h0dHBzOi8vZC5zeW1jYi5jb20vcnBhMC4GCCsG
-# AQUFBwEBBCIwIDAeBggrBgEFBQcwAYYSaHR0cDovL3Muc3ltY2QuY29tMDYGA1Ud
-# HwQvMC0wK6ApoCeGJWh0dHA6Ly9zLnN5bWNiLmNvbS91bml2ZXJzYWwtcm9vdC5j
-# cmwwEwYDVR0lBAwwCgYIKwYBBQUHAwgwKAYDVR0RBCEwH6QdMBsxGTAXBgNVBAMT
-# EFRpbWVTdGFtcC0yMDQ4LTMwHQYDVR0OBBYEFK9j1sqjToVy4Ke8QfMpojh/gHVi
-# MB8GA1UdIwQYMBaAFLZ3+mlIR59TEtXC6gcydgfRlwcZMA0GCSqGSIb3DQEBCwUA
-# A4IBAQB16rAt1TQZXDJF/g7h1E+meMFv1+rd3E/zociBiPenjxXmQCmt5l30otlW
-# ZIRxMCrdHmEXZiBWBpgZjV1x8viXvAn9HJFHyeLojQP7zJAv1gpsTjPs1rSTyEyQ
-# Y0g5QCHE3dZuiZg8tZiX6KkGtwnJj1NXQZAv4R5NTtzKEHhsQm7wtsX4YVxS9U72
-# a433Snq+8839A9fZ9gOoD+NT9wp17MZ1LqpmhQSZt/gGV+HGDvbor9rsmxgfqrnj
-# OgC/zoqUywHbnsc4uw9Sq9HjlANgCk2g/idtFDL8P5dA4b+ZidvkORS92uTTw+or
-# WrOVWFUEfcea7CMDjYUq0v+uqWGBMIIFSzCCBDOgAwIBAgIQe9Tlr7rMBz+hASME
-# IkFNEjANBgkqhkiG9w0BAQsFADB3MQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3lt
-# YW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdv
-# cmsxKDAmBgNVBAMTH1N5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0EwHhcN
-# MTcxMjIzMDAwMDAwWhcNMjkwMzIyMjM1OTU5WjCBgDELMAkGA1UEBhMCVVMxHTAb
-# BgNVBAoTFFN5bWFudGVjIENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1hbnRlYyBU
-# cnVzdCBOZXR3b3JrMTEwLwYDVQQDEyhTeW1hbnRlYyBTSEEyNTYgVGltZVN0YW1w
-# aW5nIFNpZ25lciAtIEczMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA
-# rw6Kqvjcv2l7VBdxRwm9jTyB+HQVd2eQnP3eTgKeS3b25TY+ZdUkIG0w+d0dg+k/
-# J0ozTm0WiuSNQI0iqr6nCxvSB7Y8tRokKPgbclE9yAmIJgg6+fpDI3VHcAyzX1uP
-# CB1ySFdlTa8CPED39N0yOJM/5Sym81kjy4DeE035EMmqChhsVWFX0fECLMS1q/Js
-# I9KfDQ8ZbK2FYmn9ToXBilIxq1vYyXRS41dsIr9Vf2/KBqs/SrcidmXs7DbylpWB
-# Jiz9u5iqATjTryVAmwlT8ClXhVhe6oVIQSGH5d600yaye0BTWHmOUjEGTZQDRcTO
-# PAPstwDyOiLFtG/l77CKmwIDAQABo4IBxzCCAcMwDAYDVR0TAQH/BAIwADBmBgNV
-# HSAEXzBdMFsGC2CGSAGG+EUBBxcDMEwwIwYIKwYBBQUHAgEWF2h0dHBzOi8vZC5z
-# eW1jYi5jb20vY3BzMCUGCCsGAQUFBwICMBkaF2h0dHBzOi8vZC5zeW1jYi5jb20v
-# cnBhMEAGA1UdHwQ5MDcwNaAzoDGGL2h0dHA6Ly90cy1jcmwud3Muc3ltYW50ZWMu
-# Y29tL3NoYTI1Ni10c3MtY2EuY3JsMBYGA1UdJQEB/wQMMAoGCCsGAQUFBwMIMA4G
-# A1UdDwEB/wQEAwIHgDB3BggrBgEFBQcBAQRrMGkwKgYIKwYBBQUHMAGGHmh0dHA6
-# Ly90cy1vY3NwLndzLnN5bWFudGVjLmNvbTA7BggrBgEFBQcwAoYvaHR0cDovL3Rz
-# LWFpYS53cy5zeW1hbnRlYy5jb20vc2hhMjU2LXRzcy1jYS5jZXIwKAYDVR0RBCEw
-# H6QdMBsxGTAXBgNVBAMTEFRpbWVTdGFtcC0yMDQ4LTYwHQYDVR0OBBYEFKUTAamf
-# hcwbbhYeXzsxqnk2AHsdMB8GA1UdIwQYMBaAFK9j1sqjToVy4Ke8QfMpojh/gHVi
-# MA0GCSqGSIb3DQEBCwUAA4IBAQBGnq/wuKJfoplIz6gnSyHNsrmmcnBjL+NVKXs5
-# Rk7nfmUGWIu8V4qSDQjYELo2JPoKe/s702K/SpQV5oLbilRt/yj+Z89xP+YzCdmi
-# WRD0Hkr+Zcze1GvjUil1AEorpczLm+ipTfe0F1mSQcO3P4bm9sB/RDxGXBda46Q7
-# 1Wkm1SF94YBnfmKst04uFZrlnCOvWxHqcalB+Q15OKmhDc+0sdo+mnrHIsV0zd9H
-# CYbE/JElshuW6YUI6N3qdGBuYKVWeg3IRFjc5vlIFJ7lv94AvXexmBRyFCTfxxEs
-# HwA/w0sUxmcczB4Go5BfXFSLPuMzW4IPxbeGAk5xn+lmRT92MYICWjCCAlYCAQEw
-# gYswdzELMAkGA1UEBhMCVVMxHTAbBgNVBAoTFFN5bWFudGVjIENvcnBvcmF0aW9u
-# MR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMSgwJgYDVQQDEx9TeW1h
-# bnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIENBAhB71OWvuswHP6EBIwQiQU0SMAsG
-# CWCGSAFlAwQCAaCBpDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcNAQkQAQQwHAYJKoZI
-# hvcNAQkFMQ8XDTIyMDQxMzA3MzUzNFowLwYJKoZIhvcNAQkEMSIEIA+Oa1gr7lrV
-# YHaDPLz1z2jg0rMx6Tsv4CVyAPzSG+JMMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIE
-# IMR0znYAfQI5Tg2l5N58FMaA+eKCATz+9lPvXbcf32H4MAsGCSqGSIb3DQEBAQSC
-# AQB4vQo1mEC+ciSkVqbg1D8qnG3eu4X3MbTouL1lC9YWWUjniH53yOIuXYFtdjBy
-# D7bxsxhqx9GwYkBSoB0fpTdPv71PggECnToSRIwk9my7zHciOMtc0wMGqXdFbdC4
-# Pb6+U63FWz21PQZfSMLYrS/2AhRE2HD3B1LQjwzlyBgKIC6ffX5mN43E5O1glYG6
-# QjdiqweabhCSa1yjuAFY+tgahhrlYxcOLWdjdj8UfYf8GsiV8ybc5pJVw+9FB63e
-# tEsM/aT/3r/8+POw3tPhMeZOUow+IHGfJwSM8nQCGDvawEW6t57/eVcO62mZmnKF
-# Cmw6WZJ2ZuS5EnBZQ4YUB305
+# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCCu
+# vsCGfi/WNfAnChPFQ0UuX9Z/KHqFqTGLh/6f4iO/TzANBgkqhkiG9w0BAQEFAASC
+# AgCZfdOeL/Mw4glFkthblkz91oeRVghJtpsKJR9IHayzjjU34VHGBxvFSsk/3Mrz
+# hBQzAqLjwyZnCjvCFHmO8NeCdA6hHREsWCTCkhy4n8ugh3dUsJjwQsljxXUJ+GuB
+# HK02YFoOktZyLo5ffEwNL/YanAZ537TpGxnUPPRwvQIakMyasj04kb4LIlhHz6TJ
+# F1apCFR7wcvYGFPisrGVY0TuLgfiqVhXhAERlkJhsSJX0RYg8Cj0LdQ4LrRR/3MX
+# L0hHaN6Syme5plCCz/fuJRz43UfZKdjaQBVfY6QflDRZ6aiwRxUaG6pxFQL7fhz4
+# FiDfaTSBDQMaU+LyMGGupXgOzFuk+kIFxk8jWRe2+xKnCs9K8bOdiX+t5HQXYiWQ
+# ByIwdqoh3sjs/jM9wiQ4OaSAUVemXhP0mzF8e3/yUbMUrgcW2mWMTFFFhYgaTIER
+# Dimo7l1wZxHgJXB2uf+gK0s/2iQ6gjLydC8eLp+NAikSm2lp581AA7OI5NPMybS1
+# FEW6wAozaGdNo3j1zsz7Tt2KQl1Jy4mmZVCOnoYJZGnpS15pyl4qhLRO5+yyzaQ8
+# yv098jwxhONwnl3WXV2UheD7WJ5pl/KSS3gtFKmZH8k5AtqO9InneMgXvsneus2v
+# s+UfASgh3m+Dt7KahyGHWBG2/8fuUU7kVlQ1Sf5hXWuMBKGCDiswgg4nBgorBgEE
+# AYI3AwMBMYIOFzCCDhMGCSqGSIb3DQEHAqCCDgQwgg4AAgEDMQ0wCwYJYIZIAWUD
+# BAIBMIH+BgsqhkiG9w0BCRABBKCB7gSB6zCB6AIBAQYLYIZIAYb4RQEHFwMwITAJ
+# BgUrDgMCGgUABBTf55q3NxccHxtZsPtRv9jzNjSdEQIUfQfw8uznUGOSERswLauj
+# mcTgLsAYDzIwMjIwNTI2MjM1MzAyWjADAgEeoIGGpIGDMIGAMQswCQYDVQQGEwJV
+# UzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFu
+# dGVjIFRydXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNIQTI1NiBUaW1l
+# U3RhbXBpbmcgU2lnbmVyIC0gRzOgggqLMIIFODCCBCCgAwIBAgIQewWx1EloUUT3
+# yYnSnBmdEjANBgkqhkiG9w0BAQsFADCBvTELMAkGA1UEBhMCVVMxFzAVBgNVBAoT
+# DlZlcmlTaWduLCBJbmMuMR8wHQYDVQQLExZWZXJpU2lnbiBUcnVzdCBOZXR3b3Jr
+# MTowOAYDVQQLEzEoYykgMjAwOCBWZXJpU2lnbiwgSW5jLiAtIEZvciBhdXRob3Jp
+# emVkIHVzZSBvbmx5MTgwNgYDVQQDEy9WZXJpU2lnbiBVbml2ZXJzYWwgUm9vdCBD
+# ZXJ0aWZpY2F0aW9uIEF1dGhvcml0eTAeFw0xNjAxMTIwMDAwMDBaFw0zMTAxMTEy
+# MzU5NTlaMHcxCzAJBgNVBAYTAlVTMR0wGwYDVQQKExRTeW1hbnRlYyBDb3Jwb3Jh
+# dGlvbjEfMB0GA1UECxMWU3ltYW50ZWMgVHJ1c3QgTmV0d29yazEoMCYGA1UEAxMf
+# U3ltYW50ZWMgU0hBMjU2IFRpbWVTdGFtcGluZyBDQTCCASIwDQYJKoZIhvcNAQEB
+# BQADggEPADCCAQoCggEBALtZnVlVT52Mcl0agaLrVfOwAa08cawyjwVrhponADKX
+# ak3JZBRLKbvC2Sm5Luxjs+HPPwtWkPhiG37rpgfi3n9ebUA41JEG50F8eRzLy60b
+# v9iVkfPw7mz4rZY5Ln/BJ7h4OcWEpe3tr4eOzo3HberSmLU6Hx45ncP0mqj0hOHE
+# 0XxxxgYptD/kgw0mw3sIPk35CrczSf/KO9T1sptL4YiZGvXA6TMU1t/HgNuR7v68
+# kldyd/TNqMz+CfWTN76ViGrF3PSxS9TO6AmRX7WEeTWKeKwZMo8jwTJBG1kOqT6x
+# zPnWK++32OTVHW0ROpL2k8mc40juu1MO1DaXhnjFoTcCAwEAAaOCAXcwggFzMA4G
+# A1UdDwEB/wQEAwIBBjASBgNVHRMBAf8ECDAGAQH/AgEAMGYGA1UdIARfMF0wWwYL
+# YIZIAYb4RQEHFwMwTDAjBggrBgEFBQcCARYXaHR0cHM6Ly9kLnN5bWNiLmNvbS9j
+# cHMwJQYIKwYBBQUHAgIwGRoXaHR0cHM6Ly9kLnN5bWNiLmNvbS9ycGEwLgYIKwYB
+# BQUHAQEEIjAgMB4GCCsGAQUFBzABhhJodHRwOi8vcy5zeW1jZC5jb20wNgYDVR0f
+# BC8wLTAroCmgJ4YlaHR0cDovL3Muc3ltY2IuY29tL3VuaXZlcnNhbC1yb290LmNy
+# bDATBgNVHSUEDDAKBggrBgEFBQcDCDAoBgNVHREEITAfpB0wGzEZMBcGA1UEAxMQ
+# VGltZVN0YW1wLTIwNDgtMzAdBgNVHQ4EFgQUr2PWyqNOhXLgp7xB8ymiOH+AdWIw
+# HwYDVR0jBBgwFoAUtnf6aUhHn1MS1cLqBzJ2B9GXBxkwDQYJKoZIhvcNAQELBQAD
+# ggEBAHXqsC3VNBlcMkX+DuHUT6Z4wW/X6t3cT/OhyIGI96ePFeZAKa3mXfSi2VZk
+# hHEwKt0eYRdmIFYGmBmNXXHy+Je8Cf0ckUfJ4uiNA/vMkC/WCmxOM+zWtJPITJBj
+# SDlAIcTd1m6JmDy1mJfoqQa3CcmPU1dBkC/hHk1O3MoQeGxCbvC2xfhhXFL1TvZr
+# jfdKer7zzf0D19n2A6gP41P3CnXsxnUuqmaFBJm3+AZX4cYO9uiv2uybGB+queM6
+# AL/OipTLAduexzi7D1Kr0eOUA2AKTaD+J20UMvw/l0Dhv5mJ2+Q5FL3a5NPD6ita
+# s5VYVQR9x5rsIwONhSrS/66pYYEwggVLMIIEM6ADAgECAhB71OWvuswHP6EBIwQi
+# QU0SMA0GCSqGSIb3DQEBCwUAMHcxCzAJBgNVBAYTAlVTMR0wGwYDVQQKExRTeW1h
+# bnRlYyBDb3Jwb3JhdGlvbjEfMB0GA1UECxMWU3ltYW50ZWMgVHJ1c3QgTmV0d29y
+# azEoMCYGA1UEAxMfU3ltYW50ZWMgU0hBMjU2IFRpbWVTdGFtcGluZyBDQTAeFw0x
+# NzEyMjMwMDAwMDBaFw0yOTAzMjIyMzU5NTlaMIGAMQswCQYDVQQGEwJVUzEdMBsG
+# A1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24xHzAdBgNVBAsTFlN5bWFudGVjIFRy
+# dXN0IE5ldHdvcmsxMTAvBgNVBAMTKFN5bWFudGVjIFNIQTI1NiBUaW1lU3RhbXBp
+# bmcgU2lnbmVyIC0gRzMwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQCv
+# Doqq+Ny/aXtUF3FHCb2NPIH4dBV3Z5Cc/d5OAp5LdvblNj5l1SQgbTD53R2D6T8n
+# SjNObRaK5I1AjSKqvqcLG9IHtjy1GiQo+BtyUT3ICYgmCDr5+kMjdUdwDLNfW48I
+# HXJIV2VNrwI8QPf03TI4kz/lLKbzWSPLgN4TTfkQyaoKGGxVYVfR8QIsxLWr8mwj
+# 0p8NDxlsrYViaf1OhcGKUjGrW9jJdFLjV2wiv1V/b8oGqz9KtyJ2ZezsNvKWlYEm
+# LP27mKoBONOvJUCbCVPwKVeFWF7qhUhBIYfl3rTTJrJ7QFNYeY5SMQZNlANFxM48
+# A+y3API6IsW0b+XvsIqbAgMBAAGjggHHMIIBwzAMBgNVHRMBAf8EAjAAMGYGA1Ud
+# IARfMF0wWwYLYIZIAYb4RQEHFwMwTDAjBggrBgEFBQcCARYXaHR0cHM6Ly9kLnN5
+# bWNiLmNvbS9jcHMwJQYIKwYBBQUHAgIwGRoXaHR0cHM6Ly9kLnN5bWNiLmNvbS9y
+# cGEwQAYDVR0fBDkwNzA1oDOgMYYvaHR0cDovL3RzLWNybC53cy5zeW1hbnRlYy5j
+# b20vc2hhMjU2LXRzcy1jYS5jcmwwFgYDVR0lAQH/BAwwCgYIKwYBBQUHAwgwDgYD
+# VR0PAQH/BAQDAgeAMHcGCCsGAQUFBwEBBGswaTAqBggrBgEFBQcwAYYeaHR0cDov
+# L3RzLW9jc3Aud3Muc3ltYW50ZWMuY29tMDsGCCsGAQUFBzAChi9odHRwOi8vdHMt
+# YWlhLndzLnN5bWFudGVjLmNvbS9zaGEyNTYtdHNzLWNhLmNlcjAoBgNVHREEITAf
+# pB0wGzEZMBcGA1UEAxMQVGltZVN0YW1wLTIwNDgtNjAdBgNVHQ4EFgQUpRMBqZ+F
+# zBtuFh5fOzGqeTYAex0wHwYDVR0jBBgwFoAUr2PWyqNOhXLgp7xB8ymiOH+AdWIw
+# DQYJKoZIhvcNAQELBQADggEBAEaer/C4ol+imUjPqCdLIc2yuaZycGMv41UpezlG
+# Tud+ZQZYi7xXipINCNgQujYk+gp7+zvTYr9KlBXmgtuKVG3/KP5nz3E/5jMJ2aJZ
+# EPQeSv5lzN7Ua+NSKXUASiulzMub6KlN97QXWZJBw7c/hub2wH9EPEZcF1rjpDvV
+# aSbVIX3hgGd+Yqy3Ti4VmuWcI69bEepxqUH5DXk4qaENz7Sx2j6aescixXTN30cJ
+# hsT8kSWyG5bphQjo3ep0YG5gpVZ6DchEWNzm+UgUnuW/3gC9d7GYFHIUJN/HESwf
+# AD/DSxTGZxzMHgajkF9cVIs+4zNbgg/Ft4YCTnGf6WZFP3YxggJaMIICVgIBATCB
+# izB3MQswCQYDVQQGEwJVUzEdMBsGA1UEChMUU3ltYW50ZWMgQ29ycG9yYXRpb24x
+# HzAdBgNVBAsTFlN5bWFudGVjIFRydXN0IE5ldHdvcmsxKDAmBgNVBAMTH1N5bWFu
+# dGVjIFNIQTI1NiBUaW1lU3RhbXBpbmcgQ0ECEHvU5a+6zAc/oQEjBCJBTRIwCwYJ
+# YIZIAWUDBAIBoIGkMBoGCSqGSIb3DQEJAzENBgsqhkiG9w0BCRABBDAcBgkqhkiG
+# 9w0BCQUxDxcNMjIwNTI2MjM1MzAyWjAvBgkqhkiG9w0BCQQxIgQg9na1UzAVQEY4
+# cNc+Mp+WUPvWdvjH29Q/+ORGzPKoBDIwNwYLKoZIhvcNAQkQAi8xKDAmMCQwIgQg
+# xHTOdgB9AjlODaXk3nwUxoD54oIBPP72U+9dtx/fYfgwCwYJKoZIhvcNAQEBBIIB
+# ABW6j/WA90aQGqlNUYURMVWNlNgoOB5DQ/mO1gzyF0qh9E6ckeNRnTIEFNNj5XAw
+# JJG+1lorcoZfwEaBIztVBUAgKzKiD9azrK2F6KghAHliZ7l9LpgPrNvI91Xy1N1z
+# bwjH3UGPmK9FnPTS2MJg9GKguPiTUX5xgekx3OCgDTzjxGgoDjR0j8QCbtIdis0e
+# KRYBVBYlsar9OTEAG3MYMQp4CKUih6UJFTbIQdYbvvgQbK/rQKQHyTegwCe18v/u
+# 2+RguKvAflFFneY8Mf+HqnLdtgeUfseNMNXlV5O0LlFljQR/BEK4rOCrzzsnmxDn
+# 8pm2AS/nGxU7ALvnJNagQCg=
 # SIG # End signature block
