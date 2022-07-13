@@ -148,7 +148,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_PSMCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "33"
+[int]$versionNumber = "34"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -2492,7 +2492,7 @@ $ZipToupload = "$VaultOperationFolder\_CPMConnectionTestLog"
                     [int]$lasthint = $lasthint+1
                     Write-LogMessage -type Warning -MSG "3) Hint: Communication over 1858/TCP is required to utilize sticky session and maintain the same source IP for the duration of the session."
                     Write-LogMessage -type Warning -MSG "4) In case of PA FW or similar configuration check out this page: "
-                    Write-LogMessage -type Warning -MSG "   https://docs.cyberark.com/Product-Doc/OnlineHelp/PrivCloud/Latest/en/Content/Privilege%20Cloud/PrivCloud-Palo-Alto-FW.htm"
+                    Write-LogMessage -type Warning -MSG "   https://docs.cyberark.com/Product-Doc/OnlineHelp/PrivCloud-SS/Latest/en/Content/Privilege%20Cloud/Priv-Cloud-Firewall-setup.htm"
                 }
                 Else{
                     Write-LogMessage -type Warning -MSG "3) Hint: Typically this means there is a problem with Username/Password or FW configuration."
@@ -3187,8 +3187,8 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # SIG # Begin signature block
 # MIIgTgYJKoZIhvcNAQcCoIIgPzCCIDsCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCC2YoHILOdh97UG
-# vONae3Tqo90+ClNvx9Y3ufUtfPw04qCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDY8uoSmVa5vrLr
+# IIl3E9wws6gaPHEFkIhuWRGS79etQaCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
 # th1HYVMeP3XtMA0GCSqGSIb3DQEBCwUAMFMxCzAJBgNVBAYTAkJFMRkwFwYDVQQK
 # ExBHbG9iYWxTaWduIG52LXNhMSkwJwYDVQQDEyBHbG9iYWxTaWduIENvZGUgU2ln
 # bmluZyBSb290IFI0NTAeFw0yMDA3MjgwMDAwMDBaFw0zMDA3MjgwMDAwMDBaMFwx
@@ -3269,23 +3269,23 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # R2xvYmFsU2lnbiBudi1zYTEyMDAGA1UEAxMpR2xvYmFsU2lnbiBHQ0MgUjQ1IEVW
 # IENvZGVTaWduaW5nIENBIDIwMjACDHBNxPwWOpXgXVV8DDANBglghkgBZQMEAgEF
 # AKB8MBAGCisGAQQBgjcCAQwxAjAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEE
-# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAl
-# kTtHqqQPHeN78D8g5kBjWCVVIHfcjvfi978DP7YsejANBgkqhkiG9w0BAQEFAASC
-# AgBsHfWOBIU2UbYWniIWO1+Xid4CeT8FPQb+4OtmvUtozbbJGBw5KMF+oVdctlHi
-# QXomFW29+vz3HIiUwzj4GRXFbW2EACm6TszIdsDqAWlwlKF2Y1MnVg72Q1KC2DxZ
-# 8APoc405wGNg0bvN+ymA6oe0BCLLirJIF+rTkRxWP7abyEF5yfHwIjUGEs/+Gqmp
-# m5I60ZnuuEoSptOcHxHf72bRPi+roDfbS7mXIrU+nQ1BLNXUP4pk9PZduj6Z40Kq
-# e890WXkCkZ5ET5yCgN60jdHok11SRiZUu7rkZSG/XRJ7LsiPn7v1YkQGJbX3V1Tl
-# nSQfG7H6wv6jtB9zMODaMPLTpad15I9+X7JE2E8xKmOcTv0a+C6D0UsHsZ7AvdXD
-# Ql3yA3eqvSpjgnaaopVrCWQAC+baZZHSH7w5rbDjHhIGM1wxAikgc8c0C8+cmRfm
-# l20HEhg+xdAVt3Jw3wycTSvpwoFpbVLWNPJDcjcuvtmbndpV7+u51j+sUAvEOxW3
-# KJ6mYTQhxvEAZSR6EmmAaMXdfxcjIM//rXPA0sU7KQsBj+DN6tkfVXCijuJT6K68
-# KQCfarzb980f/CX/8LvJQgtHB9vJm+j4nDHqQtegp1FW+FWC4iZXLShCkfNxu6yL
-# T/jcUX5ReGWhnfu6LyaxmxstA+6pmoNwl2htnuLSO2/nM6GCDiwwgg4oBgorBgEE
+# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAw
+# PLwFbkPRRtrCaGnWxcul5Gt5Ka7EcZWQOpDD9KhFATANBgkqhkiG9w0BAQEFAASC
+# AgCzUEdTEaExRml/2wcMyNPV/nvkycCfFy2trqP49xW8cr6xGFhvQk5FJy3sh8OP
+# qefYFDAQXKI/cd5/Yj7CxBviiDnoKGzahQPFpypvH8Ev12iuWV0FP2bFgrDqMu6r
+# rECiMdnt9MxkEUdN5iCZvvvIkwwIIpH92KGgX467++kZUKA8tI2pwnyfAN+NhI+e
+# QI1GrKGl+aCacEO56mV/KV3KnOiX9EbE+1UhDfCd4ebsdxJzK26kUpeo9eHyjfCK
+# PDA7sl6Yf0UfH3FltZUjQQ+dIDvCXFzRNqxtH76SykN7ciuxIKPNRy9wGb46c8Xq
+# 2s90eurWooDr0JbomWWHLWfuKMIwBzysrntjq/psne31q7kBk8hXAaavkZtppZy7
+# ZEjQuwIIETPNguy5h8/Fu56WctY+R5hTmOWOSDyizrFPwpf77BJG7zRiyIuBr6AQ
+# R1Lvu4kbVI1KGj7FrHpBueRSwfWjRAB3B2snb2Ppm5qiNYXB1MiSgj112FP2PQ+C
+# AREjm8QLBwFsxC8yB4Hx7WDkZCA//PzvSPDDv54YltZP1YSXcgMsRy9GvrTcs24z
+# GtxnRdYY6LIV7dA8vbd+tJI9BzjTnEWfFVTcyrnhDuFdvhh7lEdiwZMmVBu2cSei
+# lfuiZjNkmoqVBoqj2CT064AmYW75DwcMQfXme9UaxQJ056GCDiwwgg4oBgorBgEE
 # AYI3AwMBMYIOGDCCDhQGCSqGSIb3DQEHAqCCDgUwgg4BAgEDMQ0wCwYJYIZIAWUD
 # BAIBMIH/BgsqhkiG9w0BCRABBKCB7wSB7DCB6QIBAQYLYIZIAYb4RQEHFwMwITAJ
-# BgUrDgMCGgUABBTdM7u/mzaS6FG9MwvsnfxkG4azjgIVAKs5yqxM/7IxqgPbD99M
-# EX7Vh0dqGA8yMDIyMDYyMDE2MzgxMFowAwIBHqCBhqSBgzCBgDELMAkGA1UEBhMC
+# BgUrDgMCGgUABBQyFmxjfrosZ+k2lP+rfrA1fBkcwwIVAJDOk+iTF8cLE+XmT9BG
+# dfPPDgYkGA8yMDIyMDcxMzE1NTgzNVowAwIBHqCBhqSBgzCBgDELMAkGA1UEBhMC
 # VVMxHTAbBgNVBAoTFFN5bWFudGVjIENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1h
 # bnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYDVQQDEyhTeW1hbnRlYyBTSEEyNTYgVGlt
 # ZVN0YW1waW5nIFNpZ25lciAtIEczoIIKizCCBTgwggQgoAMCAQICEHsFsdRJaFFE
@@ -3349,13 +3349,13 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # MR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMSgwJgYDVQQDEx9TeW1h
 # bnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIENBAhB71OWvuswHP6EBIwQiQU0SMAsG
 # CWCGSAFlAwQCAaCBpDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcNAQkQAQQwHAYJKoZI
-# hvcNAQkFMQ8XDTIyMDYyMDE2MzgxMFowLwYJKoZIhvcNAQkEMSIEIBYK4R6Shaz/
-# /as1Xz/EwLiTB9HR+dxlsYtyerT2+ySLMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIE
+# hvcNAQkFMQ8XDTIyMDcxMzE1NTgzNVowLwYJKoZIhvcNAQkEMSIEIAUAgAdH2893
+# 4EgdfX0lLr+J57dLARvnPblLebUvMepPMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIE
 # IMR0znYAfQI5Tg2l5N58FMaA+eKCATz+9lPvXbcf32H4MAsGCSqGSIb3DQEBAQSC
-# AQBGnrrCk2l9kUKmSrVe+43SV/mSc+VqAU4LRel1HfBKxpyv/C1a184N+MpLigXC
-# cJn2swa1QP2oW/ZhGgF7K4xX3v3baF8CsxBXV0AH4XUYj4QdntJjpxA6az9ZoD7U
-# g7IDzt1joR0C1bP6A3sI4NrTVntMun+Cqi95JhYUaGYl2IJ5RboKb/fHr4Q/bpkr
-# lOZ1R9iIQP0nwjG/ANWlulFWmj2oa7kvtvTbkQw6bm43Oth23REQ2+0kcf6migUT
-# g4Ue6oQflPLbGRkUI22pAhmolwYnE2Q5mOG60j/glGDPbSplU2FNop3OgTtUcVh3
-# csVT/t6rCxB9XWSckH8bjueE
+# AQCL5InRQKrsz5hh85iWZROuUgandNA3WHUByP7dkSKlfMc0dmACrWEGC9lRAd4u
+# xjadKTbxY1TCCoJOrUwtQZM/mfdBM86km+bbSS8a5O+ioZqadGD4v0pGUNYggyAF
+# lrLjF8dkDzXpyazgYv3RDatYd9R2EUupkSbKKmoMzZ/gvh6gOWOGi7vkyNzTXUxW
+# CgdtF9B6VVnNtfo7n0hloabGQ+ycCgjt9c/mkXn75aEMfuCPQnwf/61j+y+M9r8T
+# 2tIvWywX+h5OUQrD74mqz1HNeiSDaB/30HP/PSBWF9pVDkH3fh/2055JIFuMCUG3
+# a+06ATtceFdNIiUYQ0ln5S5Z
 # SIG # End signature block
