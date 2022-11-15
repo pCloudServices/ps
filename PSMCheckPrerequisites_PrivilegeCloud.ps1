@@ -148,7 +148,7 @@ $global:InVerbose = $PSBoundParameters.Verbose.IsPresent
 $global:PSMConfigFile = "_PSMCheckPrerequisites_PrivilegeCloud.ini"
 
 # Script Version
-[int]$versionNumber = "34"
+[int]$versionNumber = "35"
 
 # ------ SET Files and Folders Paths ------
 # Set Log file path
@@ -157,7 +157,8 @@ $global:LOG_FILE_PATH = "$ScriptLocation\_PSMCheckPrerequisites_PrivilegeCloud.l
 $global:CONFIG_PARAMETERS_FILE = "$ScriptLocation\$PSMConfigFile"
 
 # ------ SET Global Parameters ------
-$global:g_ConsoleIP = "console.privilegecloud.cyberark.com"
+$global:g_ConsoleIPstd = "console.privilegecloud.cyberark.com"
+$global:g_ConsoleIPispss = "console.privilegecloud.cyberark.cloud"
 $global:g_ScriptName = "PSMCheckPrerequisites_PrivilegeCloud.ps1"
 $global:g_CryptoPath = "C:\ProgramData\Microsoft\Crypto"
 
@@ -2555,12 +2556,15 @@ param
 
         # Check if standard or shared services implementation.
         if($PortalURL -like "*.privilegecloud.cyberark.com*"){
-        # Standard
-        $script:VaultIP = "vault-$portalSubDomainURL.privilegecloud.cyberark.com"
-        $script:TunnelIP = "connector-$portalSubDomainURL.privilegecloud.cyberark.com"
-        }Else{
-        $script:VaultIP = "vault-$portalSubDomainURL.privilegecloud.cyberark.cloud"
-        $script:TunnelIP = "connector-$portalSubDomainURL.privilegecloud.cyberark.cloud"
+            # Standard
+            $script:VaultIP = "vault-$portalSubDomainURL.privilegecloud.cyberark.com"
+            $script:TunnelIP = "connector-$portalSubDomainURL.privilegecloud.cyberark.com"
+        }Elseif($PortalURL -like "*.privilegecloud.cyberark.cloud*"){
+            # ispss
+            $script:VaultIP = "vault-$portalSubDomainURL.privilegecloud.cyberark.cloud"
+            $script:TunnelIP = "connector-$portalSubDomainURL.privilegecloud.cyberark.cloud"
+        }Elseif($portalSubDomainURL -eq $null){
+            # user didn't enter anything, do nothing in this case, so it skips the connection test.
         }		
 			
 		# Create the Config file for next use
@@ -2571,6 +2575,8 @@ param
             CustomerId = $CustomerId.trim()
 		}
 		$parameters | Export-CliXML -Path $CONFIG_PARAMETERS_FILE -NoClobber -Encoding ASCII
+		# deal with ispss
+        if($PortalURL -like "*.privilegecloud.cyberark.com*"){$script:g_ConsoleIP = $g_ConsoleIPstd}else{$script:g_ConsoleIP = $g_ConsoleIPispss}
 	 }
 	 else{
 		$parameters = Import-CliXML -Path $CONFIG_PARAMETERS_FILE
@@ -2578,6 +2584,8 @@ param
 		$script:TunnelIP = $parameters.TunnelIP
 		$script:PortalURL = $parameters.PortalURL
         $script:CustomerId = $parameters.CustomerId
+		# deal with ispss
+        if($PortalURL -like "*.privilegecloud.cyberark.com*"){$script:g_ConsoleIP = $g_ConsoleIPstd}else{$script:g_ConsoleIP = $g_ConsoleIPispss}
 	 }
  }
 
@@ -3187,8 +3195,8 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # SIG # Begin signature block
 # MIIgTgYJKoZIhvcNAQcCoIIgPzCCIDsCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDY8uoSmVa5vrLr
-# IIl3E9wws6gaPHEFkIhuWRGS79etQaCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDl8N/x6iY5H3L4
+# /FbzZJ1APYJ9O5h73kufocL3PwgPKqCCDl8wggboMIIE0KADAgECAhB3vQ4Ft1kL
 # th1HYVMeP3XtMA0GCSqGSIb3DQEBCwUAMFMxCzAJBgNVBAYTAkJFMRkwFwYDVQQK
 # ExBHbG9iYWxTaWduIG52LXNhMSkwJwYDVQQDEyBHbG9iYWxTaWduIENvZGUgU2ln
 # bmluZyBSb290IFI0NTAeFw0yMDA3MjgwMDAwMDBaFw0zMDA3MjgwMDAwMDBaMFwx
@@ -3269,23 +3277,23 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # R2xvYmFsU2lnbiBudi1zYTEyMDAGA1UEAxMpR2xvYmFsU2lnbiBHQ0MgUjQ1IEVW
 # IENvZGVTaWduaW5nIENBIDIwMjACDHBNxPwWOpXgXVV8DDANBglghkgBZQMEAgEF
 # AKB8MBAGCisGAQQBgjcCAQwxAjAAMBkGCSqGSIb3DQEJAzEMBgorBgEEAYI3AgEE
-# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCAw
-# PLwFbkPRRtrCaGnWxcul5Gt5Ka7EcZWQOpDD9KhFATANBgkqhkiG9w0BAQEFAASC
-# AgCzUEdTEaExRml/2wcMyNPV/nvkycCfFy2trqP49xW8cr6xGFhvQk5FJy3sh8OP
-# qefYFDAQXKI/cd5/Yj7CxBviiDnoKGzahQPFpypvH8Ev12iuWV0FP2bFgrDqMu6r
-# rECiMdnt9MxkEUdN5iCZvvvIkwwIIpH92KGgX467++kZUKA8tI2pwnyfAN+NhI+e
-# QI1GrKGl+aCacEO56mV/KV3KnOiX9EbE+1UhDfCd4ebsdxJzK26kUpeo9eHyjfCK
-# PDA7sl6Yf0UfH3FltZUjQQ+dIDvCXFzRNqxtH76SykN7ciuxIKPNRy9wGb46c8Xq
-# 2s90eurWooDr0JbomWWHLWfuKMIwBzysrntjq/psne31q7kBk8hXAaavkZtppZy7
-# ZEjQuwIIETPNguy5h8/Fu56WctY+R5hTmOWOSDyizrFPwpf77BJG7zRiyIuBr6AQ
-# R1Lvu4kbVI1KGj7FrHpBueRSwfWjRAB3B2snb2Ppm5qiNYXB1MiSgj112FP2PQ+C
-# AREjm8QLBwFsxC8yB4Hx7WDkZCA//PzvSPDDv54YltZP1YSXcgMsRy9GvrTcs24z
-# GtxnRdYY6LIV7dA8vbd+tJI9BzjTnEWfFVTcyrnhDuFdvhh7lEdiwZMmVBu2cSei
-# lfuiZjNkmoqVBoqj2CT064AmYW75DwcMQfXme9UaxQJ056GCDiwwgg4oBgorBgEE
+# MBwGCisGAQQBgjcCAQsxDjAMBgorBgEEAYI3AgEVMC8GCSqGSIb3DQEJBDEiBCB5
+# G1PQrHs+DsLmaCLVY/tPBuP/xU7DFTDJCDpwHtwj5jANBgkqhkiG9w0BAQEFAASC
+# AgCAWHmJe+SWUcmQgNJtzcblJ3X664bBNM66LgZhtNUeVQyEaUEkUsxwm2keSn4Y
+# saH3KDlvt9gAr5zpeLNZSFkuDdjNBtSIUbyGCsbTURdTKge5NtVgv0ef2LeTh2pK
+# uDvVSunjZLAm9EVmUs/uFmpyJw7aBsqpjwhkueEIEjFcCWBPuuqGgetaDvOiPsPG
+# 5ZsOkUhWuvXl2+guCXdmIyjkuGdnyNd7jV/jPPf1yW0MtAHNi+UAgVsTKzRupgx+
+# rTXSD2Mb+5jrYTF31IgW2taUpI0FSV71qCNzvUOQXY11X6dgNS2vKP4V39+j/IVH
+# ZDHpuw/QXDRjis6xe9pG01g80unPmxkxBwM9n6E4kuBxoLJaaEALroSCwN1TjZvw
+# T5a5naTLfQH7g73E+ccYz9t13i7GBqa0a9JUUyQ+X2DYnHT7snTHCG+FHfBGcHSx
+# ARkFNgApj+REcPg1Aou0h06WrXGOqVJLX0Mqv1gRBM0xW60VKmX4c5YgsDu76cOp
+# ZXPfYb+wOuVzCPYuBph8/x0KPvbdnF4L1kz1Ff8lAsICUdzi3D08FtjUp1H01Ym0
+# giQFymiWYC96cKqj6y8ZUzI8l5PuJaKi8U7M642zyqGsj75InCgPIEDz1zYNGyah
+# I90L59CjAdpq0tc+GWUYeRJd2gw9/wehiTmaZtasX20pGqGCDiwwgg4oBgorBgEE
 # AYI3AwMBMYIOGDCCDhQGCSqGSIb3DQEHAqCCDgUwgg4BAgEDMQ0wCwYJYIZIAWUD
 # BAIBMIH/BgsqhkiG9w0BCRABBKCB7wSB7DCB6QIBAQYLYIZIAYb4RQEHFwMwITAJ
-# BgUrDgMCGgUABBQyFmxjfrosZ+k2lP+rfrA1fBkcwwIVAJDOk+iTF8cLE+XmT9BG
-# dfPPDgYkGA8yMDIyMDcxMzE1NTgzNVowAwIBHqCBhqSBgzCBgDELMAkGA1UEBhMC
+# BgUrDgMCGgUABBTnsvCfZGr4cxWYEnDLHPNcm6RJ/wIVAJ5QAbgDNmRa8r+p2KHS
+# gUYLnZjxGA8yMDIyMTExNTE0MjcyNFowAwIBHqCBhqSBgzCBgDELMAkGA1UEBhMC
 # VVMxHTAbBgNVBAoTFFN5bWFudGVjIENvcnBvcmF0aW9uMR8wHQYDVQQLExZTeW1h
 # bnRlYyBUcnVzdCBOZXR3b3JrMTEwLwYDVQQDEyhTeW1hbnRlYyBTSEEyNTYgVGlt
 # ZVN0YW1waW5nIFNpZ25lciAtIEczoIIKizCCBTgwggQgoAMCAQICEHsFsdRJaFFE
@@ -3349,13 +3357,13 @@ Write-LogMessage -Type Info -Msg "Script Ended" -Footer
 # MR8wHQYDVQQLExZTeW1hbnRlYyBUcnVzdCBOZXR3b3JrMSgwJgYDVQQDEx9TeW1h
 # bnRlYyBTSEEyNTYgVGltZVN0YW1waW5nIENBAhB71OWvuswHP6EBIwQiQU0SMAsG
 # CWCGSAFlAwQCAaCBpDAaBgkqhkiG9w0BCQMxDQYLKoZIhvcNAQkQAQQwHAYJKoZI
-# hvcNAQkFMQ8XDTIyMDcxMzE1NTgzNVowLwYJKoZIhvcNAQkEMSIEIAUAgAdH2893
-# 4EgdfX0lLr+J57dLARvnPblLebUvMepPMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIE
+# hvcNAQkFMQ8XDTIyMTExNTE0MjcyNFowLwYJKoZIhvcNAQkEMSIEIFMBJsvCq/Ep
+# Cza0Ibf9lzArMQdSme2EbgWuOykDpLprMDcGCyqGSIb3DQEJEAIvMSgwJjAkMCIE
 # IMR0znYAfQI5Tg2l5N58FMaA+eKCATz+9lPvXbcf32H4MAsGCSqGSIb3DQEBAQSC
-# AQCL5InRQKrsz5hh85iWZROuUgandNA3WHUByP7dkSKlfMc0dmACrWEGC9lRAd4u
-# xjadKTbxY1TCCoJOrUwtQZM/mfdBM86km+bbSS8a5O+ioZqadGD4v0pGUNYggyAF
-# lrLjF8dkDzXpyazgYv3RDatYd9R2EUupkSbKKmoMzZ/gvh6gOWOGi7vkyNzTXUxW
-# CgdtF9B6VVnNtfo7n0hloabGQ+ycCgjt9c/mkXn75aEMfuCPQnwf/61j+y+M9r8T
-# 2tIvWywX+h5OUQrD74mqz1HNeiSDaB/30HP/PSBWF9pVDkH3fh/2055JIFuMCUG3
-# a+06ATtceFdNIiUYQ0ln5S5Z
+# AQBEmM1i35ScVt3zXogqxVn4YnjQvUzZA+ed96LZAyse/tTfrXglBvybrEo3VAI+
+# aiEW/HKOUmAmuXIjxqSHrDyhBHbFroZg7f6guWslFuCLiENM05rfseqG7iPcJ57U
+# nqCTtS9kLT7i5EFMAbIZaxLc85x7Iuvq4AyOoE6GXQT5oTGE0TwXQCuOvIB5JWrs
+# sNZKZCpsMjNRw/auAAG4YWNOeM0owgGZbz/jMeGdzo1lRfjllf93ymYznY8/Vd59
+# dpkrgh1rC5Z4S/LKA5ck01CTyr/NxK430JCgd5wISWBp3rXWdNOWW2KsLU0slw5W
+# nZ/8yNfv5hWop9L38ONX7jOM
 # SIG # End signature block
