@@ -16,6 +16,9 @@ param(
     [string]$AuthType = "cyberark",
 
     [Parameter(Mandatory=$false)]
+    [Switch]$SkipVersionCheck,
+
+    [Parameter(Mandatory=$false)]
     [Switch]$skipTLS,
 
     [Parameter(Mandatory = $false, HelpMessage = "Specify a User that has Privilege Cloud Administrative permissions.")]
@@ -29,6 +32,7 @@ param(
 $Host.UI.RawUI.WindowTitle = "Privilege Cloud CreateCredFile-Helper"
 $Script:LOG_FILE_PATH = "$PSScriptRoot\_CreateCredFile-Helper.log"
 $global:CPMnewSyncToolFolder = "$PSScriptRoot\CreateCredFile-HelperDependencies"
+$ScriptVersion = "5.1"
 
 #region Writer Functions
 $InDebug = $PSBoundParameters.Debug.IsPresent
@@ -226,6 +230,213 @@ Function Collect-ExceptionMessage {
 
 
 #region Check latest version
+$Script:GitHubAPIURL = "https://api.github.com/repos"
+
+Function Test-ScriptLatestVersion
+{
+    [CmdletBinding()]
+    param(
+        [Parameter(Mandatory=$true)]
+        [string]$fileURL,
+        [Parameter(Mandatory=$true)]
+        [string]$currentVersion,
+        [Parameter(Mandatory=$false)]
+        [string]$versionPattern = "ScriptVersion",
+        [Parameter(Mandatory=$false)]
+        [ref]$outGitHubVersion
+    )
+    $isLatestVersion = $false
+    try{
+        $getScriptContent = (Invoke-WebRequest -UseBasicParsing -Uri $fileURL).Content
+        if($getScriptContent -match "$versionPattern\s{0,1}=\s{0,1}`"([\d\.]{1,10})`"")
+        {
+            $gitHubScriptVersion = $Matches[1]
+            if($null -ne $outGitHubVersion)
+            {
+                $outGitHubVersion.Value = $gitHubScriptVersion
+            }
+            Write-LogMessage -type Verbose -msg "Current Version: $currentVersion; GitHub Version: $gitHubScriptVersion"
+            $gitHubMajorMinor = [double]($gitHubScriptVersion.Split(".")[0..1] -join '.')
+            $currentMajorMinor = [double]($currentVersion.Split(".")[0..1] -join '.')
+            $gitHubPatch = 0
+            $currentPatch = 0
+            if(($gitHubScriptVersion.Split(".").Count -gt 2) -or ($currentVersion.Split(".").Count -gt 2))
+            {
+                $gitHubPatch = [int]($gitHubScriptVersion.Split(".")[2])
+                $currentPatch = [int]($currentVersion.Split(".")[2])
+            }
+            if($gitHubMajorMinor -gt $currentMajorMinor)
+            {
+                $isLatestVersion = $true
+            }
+            elseif($gitHubMajorMinor -eq $currentMajorMinor -and $gitHubPatch -gt $currentPatch)
+            {
+                $isLatestVersion = $true
+            }
+        }
+        else
+        {
+            Write-LogMessage -type Info -MSG "Test-ScriptLatestVersion: Couldn't match Script Version pattern ($versionPattern)"
+        }
+    }
+    catch
+    {
+        Write-LogMessage -type Info -MSG ("Test-ScriptLatestVersion: Couldn't download and check for latest version", $_.Exception)
+    }
+    return $isLatestVersion
+}
+
+Function Copy-GitHubContent
+{
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [ValidateScript({ Test-Path $_ })]
+        [string]$outputFolderPath,
+        [Parameter(Mandatory=$true)]
+        [string]$gitHubItemURL
+    )
+    try{
+        $gitHubFolderObject = (Invoke-RestMethod -Method Get -Uri $gitHubItemURL)
+        foreach ($item in $gitHubFolderObject) {
+            if($item.type -eq "dir")
+            {
+                $itemDir = Join-Path -Path $outputFolderPath -ChildPath $item.name
+                if(! (Test-Path -path $itemDir))
+                {
+                    New-Item -ItemType Directory -Path $itemDir | Out-Null
+                }
+                Copy-GitHubContent -outputFolderPath $itemDir -gitHubItemURL $item.url
+            }
+            elseif ($item.type -eq "file") {
+                Invoke-WebRequest -UseBasicParsing -Uri ($item.download_url) -OutFile $(Join-Path -Path $outputFolderPath -ChildPath $item.name)
+            }
+        }
+    }
+    catch{
+        Throw $(New-Object System.Exception ("Copy-GitHubContent: Couldn't download files and folders from GitHub URL ($gitHubItemURL)",$_.Exception))
+    }
+}
+
+Function Replace-Item
+{
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [ValidateScript({Test-Path $_})]
+        [string]$Path,
+        [Parameter(Mandatory=$true)]
+        [ValidateScript({Test-Path $_})]
+        [string]$Destination,
+        [Parameter(Mandatory=$false)]
+        [switch]$Recurse
+    )
+
+    try{
+        foreach($item in $(Get-ChildItem -Recurse:$Recurse -Path $Path))
+        {
+            $destPath = Split-Path -Path $item.FullName.Replace($Path, $Destination) -Parent
+            $oldName = "$($item.Name).OLD"
+            if(Test-Path -Path $(Join-Path -Path $destPath -ChildPath $item.Name))
+            {
+                Rename-Item -Path $(Join-Path -Path $destPath -ChildPath $item.Name) -NewName $oldName
+                Copy-Item -Path $item.FullName -Destination $(Join-Path -Path $destPath -ChildPath $item.Name)
+                Remove-Item -Path $(Join-Path -Path $destPath -ChildPath $oldName)
+            }
+            else
+            {
+                Write-Error "Can't find file $($item.Name) in destination location '$destPath' to replace, copying"
+                Copy-Item -Path $item.FullName -Destination $destPath
+            }
+        }
+    }
+    catch{
+        Throw $(New-Object System.Exception ("Replace-Item: Couldn't Replace files",$_.Exception))
+    }
+}
+
+Function Test-GitHubLatestVersion
+{
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [string]$repositoryName,
+        [Parameter(Mandatory=$true)]
+        [string]$scriptVersionFileName,
+        [Parameter(Mandatory=$true)]
+        [string]$currentVersion,
+        [Parameter(Mandatory=$true)]
+        [string]$sourceFolderPath,
+        [Parameter(Mandatory=$false)]
+        [string]$repositoryFolderPath,
+        [Parameter(Mandatory=$false)]
+        [string]$branch = "main",
+        [Parameter(Mandatory=$false)]
+        [string]$versionPattern = "ScriptVersion",
+        [Parameter(Mandatory=$false)]
+        [switch]$TestOnly
+    )
+    if([string]::IsNullOrEmpty($repositoryFolderPath))
+    {
+        $apiURL = "$GitHubAPIURL/$repositoryName/contents"
+    }
+    else {
+        $apiURL = "$GitHubAPIURL/$repositoryName/contents/$repositoryFolderPath`?ref=$branch"
+    }
+
+    $retLatestVersion = $true
+    try{
+        $folderContents = $(Invoke-RestMethod -Method Get -Uri $apiURL)
+        $scriptURL = $($folderContents | Where-Object { $_.Type -eq "file" -and $_.Name -eq $scriptVersionFileName }).download_url
+        $gitHubVersion = 0
+        $shouldDownloadLatestVersion = Test-ScriptLatestVersion -fileURL $scriptURL -currentVersion $currentVersion -outGitHubVersion ([ref]$gitHubVersion)
+    }
+    catch
+    {
+        Write-LogMessage -type Info -MSG ("Test-GitHubLatestVersion: Couldn't check for latest version $($_.Exception.Message)")
+        return $true
+    }
+
+    try{
+        if($shouldDownloadLatestVersion -eq $true)
+        {
+            $retLatestVersion = $false
+            if(! $TestOnly)
+            {
+                Write-LogMessage -type Info -Msg "Found new version (version $gitHubVersion), Updating..."
+                $tmpFolder = Join-Path -Path $sourceFolderPath -ChildPath "tmp"
+                if(! (Test-Path -Path $tmpFolder))
+                {
+                    New-Item -ItemType Directory -Path $tmpFolder | Out-Null
+                }
+                try{
+                    Copy-GitHubContent -outputFolderPath $tmpFolder -gitHubItemURL $apiURL
+                    Replace-Item -Recurse -Path $tmpFolder -Destination $sourceFolderPath
+                    Remove-Item -Recurse -Path $tmpFolder -Force
+                }
+                catch
+                {
+                    $retLatestVersion = $true
+                    Write-Error -Message "There was an error downloading GitHub content." -Exception $_.Exception
+                }
+            }
+            else {
+                Write-LogMessage -type Info -Msg "Found a new version in GitHub (version $gitHubVersion), skipping update"
+            }
+        }
+        else
+        {
+            Write-LogMessage -type Info -Msg "Current version ($currentVersion) is the latest!"
+        }
+    }
+    catch
+    {
+        Throw $(New-Object System.Exception ("Test-GitHubLatestVersion: Couldn't download latest version",$_.Exception))
+    }
+
+    return $retLatestVersion
+}
+
 # @FUNCTION@ ======================================================================================================================
 # Name...........: Get-Choice
 # Description....: Prompts user for Selection choice
@@ -1616,28 +1827,19 @@ param(
         begin {
             $processName = Split-Path -Leaf $ProcessFullPath
             $processPath = Split-Path -Parent $ProcessFullPath
-            $processLogFolder = Join-Path -Path $processPath -ChildPath 'Log'
-            $stdoutLogPath = Join-Path -Path $processLogFolder -ChildPath "$([System.IO.Path]::GetFileNameWithoutExtension($processName)).stdout.log"
-            $stderrLogPath = Join-Path -Path $processLogFolder -ChildPath "$([System.IO.Path]::GetFileNameWithoutExtension($processName)).stderr.log"
         }
         process {
             $processArgs = ""
             foreach ($item in $Args) {
                 $processArgs += "`"$item`" "
             }
-    
-            if (-not (Test-Path -LiteralPath $processLogFolder)) {
-                New-Item -Path $processLogFolder -ItemType Directory | Out-Null
-            }
 
             Write-LogMessage -type Info -MSG "Running process [$processName] from path [$processPath] with arguments [$processArgs]."
-            Write-LogMessage -type Info -MSG "SyncCompUsers stdout will be written to '$stdoutLogPath'"
-            Write-LogMessage -type Info -MSG "SyncCompUsers stderr will be written to '$stderrLogPath'"
 
             [System.Environment]::SetEnvironmentVariable('VAULT_PASSWORD', $Credentials.GetNetworkCredential().Password)
 
             try {
-                $process = (Start-Process -FilePath $ProcessFullPath -ArgumentList $processArgs -WorkingDirectory $processPath -Wait -WindowStyle Hidden -RedirectStandardOutput $stdoutLogPath -RedirectStandardError $stderrLogPath -PassThru)
+                $process = (Start-Process -FilePath $ProcessFullPath -ArgumentList $processArgs -WorkingDirectory $processPath -Wait -WindowStyle Hidden -PassThru)
             }
             finally {
                 [System.Environment]::SetEnvironmentVariable('VAULT_PASSWORD', $null)
@@ -1651,8 +1853,6 @@ param(
             else {
                 Write-LogMessage -type Error -MSG "Process $processName failed with exit code $processExitCode"
                 Write-LogMessage -type Error -MSG "More info here: $CPMnewSyncToolFolder\Log\SyncCompUsers.log"
-                Write-LogMessage -type Error -MSG "Stdout: $stdoutLogPath"
-                Write-LogMessage -type Error -MSG "Stderr: $stderrLogPath"
             }
         }
     }
@@ -1713,7 +1913,7 @@ Function Invoke-ResetCredFile
                 {
                     $foundUser = $(Find-UserInSystemLogs -User $User.ComponentUserName -LogPaths $Component.ServiceLogs)
                     If(! [string]::IsNullOrEmpty($foundUser)){
-                        Write-LogMessage -Type Info -MSG "Found a match between an offline component user '$foundUser' and local logs, will use it to generate CredFile."
+                        Write-LogMessage -Type Success -MSG "Found a match between an offline component user '$foundUser' and local logs, will use it to generate CredFile."
                         $ComponentUser = $foundUser
                         #If the $CredFile is psmgw.cred then we split the SystemHealth PSM App user into 2 strings and replace "PSMApp_blabla" with "PSMgw_blabla" so we also reset the gw cred.
                             If ($credFile -like "*psmgw.cred*"){
@@ -1725,7 +1925,7 @@ Function Invoke-ResetCredFile
                 If($offlineComponents.Count -eq 0 -or $ComponentUser -eq $null)
                 {
                     # We couldn't find any component User - ask the user to input the user name
-                    Write-LogMessage -Type Info -MSG "Couldn't match offline component user in SystemHealth in local Logs, will have to input manually."
+                    Write-LogMessage -Type Warning -MSG "Couldn't match offline component user in SystemHealth in local Logs, will have to input manually."
                     do {
                         $ComponentUser = (Read-Host "Enter the relevant user name for CredFile: '$credFile'").Trim()
                         if ([string]::IsNullOrWhiteSpace($ComponentUser)) {
@@ -1780,7 +1980,7 @@ Function Resolve-ComponentUserForCredFile
         {
             $foundUser = $(Find-UserInSystemLogs -User $User.ComponentUserName -LogPaths $Component.ServiceLogs)
             If(! [string]::IsNullOrEmpty($foundUser)){
-                Write-LogMessage -Type Info -MSG "Found a match between an offline component user '$foundUser' and local logs, will use it to generate CredFile."
+                Write-LogMessage -Type Success -MSG "Found a match between an offline component user '$foundUser' and local logs, will use it to generate CredFile."
                 $ComponentUser = $foundUser
                 if ($CredFile -like "*psmgw.cred*"){
                     $ComponentUser = "PSMGw_"+$foundUser.split("_")[1]
@@ -1790,7 +1990,7 @@ Function Resolve-ComponentUserForCredFile
         }
         If($offlineComponents.Count -eq 0 -or [string]::IsNullOrWhiteSpace($ComponentUser))
         {
-            Write-LogMessage -Type Info -MSG "Couldn't match offline component user in SystemHealth in local Logs, will have to input manually."
+            Write-LogMessage -Type Warning -MSG "Couldn't match offline component user in SystemHealth in local Logs, will have to input manually."
             do {
                 $ComponentUser = (Read-Host "Enter the relevant user name for CredFile: '$CredFile'").Trim()
                 if ([string]::IsNullOrWhiteSpace($ComponentUser)) {
@@ -2116,6 +2316,30 @@ $simplePw = $null
 
 # -----------------------------------
 # Script Begins Here
+Write-LogMessage -type Info -MSG "Starting Create CredFile helper script" -Header
+$gitHubLatestVersionParameters = @{
+    currentVersion = $ScriptVersion;
+    repositoryName = "pCloudServices/CreateCredHelper";
+    scriptVersionFileName = "CreateCredFile-Helper.ps1";
+    sourceFolderPath = $PSScriptRoot;
+}
+
+If(! $SkipVersionCheck)
+{
+	try{
+        Write-LogMessage -type Info -Msg "Current script version $ScriptVersion"
+        $isLatestVersion = $(Test-GitHubLatestVersion @gitHubLatestVersionParameters)
+		If($isLatestVersion -eq $false)
+		{
+			$scriptPathAndArgs = "`& `"$PSScriptRoot\CreateCredFile-Helper.ps1`" -SkipVersionCheck"
+			Write-LogMessage -type Info -Msg "Finished Updating, relaunching the script"
+			Invoke-Expression $scriptPathAndArgs
+			return
+		}
+	} catch {
+		Write-LogMessage -type Error -Msg "Error checking for latest version. Error: $(Join-ExceptionMessage $_.Exception)"
+	}
+}
 
 If ($(Test-CurrentUserLocalAdmin) -eq $False)
 {
