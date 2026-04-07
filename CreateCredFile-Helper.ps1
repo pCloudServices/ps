@@ -1818,7 +1818,10 @@ param(
             [string]$ProcessFullPath,
     
             [Parameter(Mandatory=$false)]
-            [string[]]$Args
+            [string[]]$Args,
+
+            [Parameter(Mandatory=$false)]
+            [string]$ComponentUser
     
         )
         begin {
@@ -1831,7 +1834,12 @@ param(
                 $processArgs += "`"$item`" "
             }
 
-            Write-LogMessage -type Info -MSG "Running process [$processName] from path [$processPath] with arguments [$processArgs]."
+            if ([string]::IsNullOrWhiteSpace($ComponentUser)) {
+                Write-LogMessage -type Info -MSG "Running $processName..."
+            }
+            else {
+                Write-LogMessage -type Info -MSG "Running $processName for user '$ComponentUser'..."
+            }
 
             [System.Environment]::SetEnvironmentVariable('VAULT_PASSWORD', $Credentials.GetNetworkCredential().Password)
 
@@ -1846,6 +1854,9 @@ param(
             [bool]$isSuccess = $false
             if ($process.ExitCode -eq 0) {
                 Write-LogMessage -type Success -MSG "Process $processName finished successfully"
+                if (-not [string]::IsNullOrWhiteSpace($ComponentUser)) {
+                    Write-LogMessage -type Success -MSG "Successfully synced CPM user '$ComponentUser'."
+                }
             }
             else {
                 Write-LogMessage -type Error -MSG "Process $processName failed with exit code $processExitCode"
@@ -1860,7 +1871,7 @@ param(
         $args = @($InputFile, "yes")
         $ExecutableFullPath = Resolve-Path $CPMnewSyncToolFolder\SyncCompUsers.exe
     
-        RunProcess -ProcessFullPath $ExecutableFullPath -Args $args
+        RunProcess -ProcessFullPath $ExecutableFullPath -Args $args -ComponentUser $apiUser
     }
     catch {
         Write-LogMessage -type Error -MSG "Failed to sync component users."
