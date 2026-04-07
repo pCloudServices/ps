@@ -1812,9 +1812,6 @@ param(
     }
     Set-Content -Path $InputFile -Value $jsonContent
     
-    Write-LogMessage -type Info -MSG "Input JSON file created/updated at $InputFile"
-    
-
     function RunProcess {
         param (
             [Parameter(Mandatory=$true)]
@@ -2406,6 +2403,8 @@ try{
                         }Else{
                             Throw "Couldn't find folder '$CPMnewSyncToolFolder'. Make sure you downloaded the latest tool package."
                         }
+                        Try{Invoke-Logoff}Catch{}
+                        Invoke-Logon
                     }
                     Write-LogMessage -type Info -MSG "Syncing $PluginManagerUser"
                     if ($typeChosen.Version -ge [version]"13.1")
