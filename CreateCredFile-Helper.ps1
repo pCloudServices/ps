@@ -1825,6 +1825,10 @@ Function Invoke-GenerateCredFile
         #Generate a new password with Complexity and we use it later for the Vault part
         $BSTR = [System.Runtime.InteropServices.Marshal]::SecureStringToBSTR($NewPassword) #Convert Password to BSTR
         $GetComponentUserDetailsNewPW = [System.Runtime.InteropServices.Marshal]::PtrToStringAuto($BSTR) #Convert Password to Plaintext
+        $ComponentUser = $ComponentUser.Trim()
+        if ([string]::IsNullOrWhiteSpace($ComponentUser)) {
+            throw "Component user is empty. Cannot generate CredFile '$FileName'."
+        }
         Write-LogMessage -type Info -MSG "Generating CredFile: '$FileName'"
         #Generate Cred, Check if component is version 12 or lower and select the relevant cred file command
         If($ComponentVersion -gt 12)
@@ -1848,6 +1852,13 @@ Function Invoke-GenerateCredFile
             If($ComponentID -eq "PSM") { $appType = "PSMApp" }
             If ($ComponentID -eq "AIM") { $appType = "AIMProvider" }
             & "$ComponentPath\Vault\CreateCredFile.exe" "$FileName" Password /username $ComponentUser /Password $GetComponentUserDetailsNewPW /AppType $appType
+        }
+        if (-not (Test-Path -LiteralPath $FileName)) {
+            throw "CreateCredFile.exe did not create file '$FileName'."
+        }
+        $credFileInfo = Get-Item -LiteralPath $FileName
+        if ($credFileInfo.Length -eq 0) {
+            throw "CreateCredFile.exe created an empty file '$FileName'."
         }
     } catch {
         Throw $(New-Object System.Exception ("Error generating CredFile for file '$FileName'.",$_.Exception))
@@ -2015,7 +2026,12 @@ Function Invoke-ResetCredFile
                 {
                     # We couldn't find any component User - ask the user to input the user name
                     Write-LogMessage -Type Info -MSG "Couldn't match offline component user in SystemHealth in local Logs, will have to input manually."
-                    $ComponentUser = $(Read-Host "Enter the relevant user name for CredFile: '$credFile'")
+                    do {
+                        $ComponentUser = (Read-Host "Enter the relevant user name for CredFile: '$credFile'").Trim()
+                        if ([string]::IsNullOrWhiteSpace($ComponentUser)) {
+                            Write-LogMessage -Type Warning -MSG "No user name was entered. Please enter a valid component user name."
+                        }
+                    } while ([string]::IsNullOrWhiteSpace($ComponentUser))
                 }
             }
             Invoke-GenerateCredFile @generateCredFileParameters -FileName $credFile -ComponentUser $ComponentUser
