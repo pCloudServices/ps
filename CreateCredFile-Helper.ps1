@@ -1761,6 +1761,48 @@ Function Invoke-ResetCredFile
     }
 }
 
+Function Resolve-ComponentUserForCredFile
+{
+    [CmdletBinding()]
+    param (
+        [Parameter(Mandatory=$true)]
+        [PSObject]$Component,
+        [Parameter(Mandatory=$true)]
+        [string]$CredFile
+    )
+
+    $ComponentUser = $(Get-CredFileUser -File $CredFile)
+    if([string]::IsNullOrEmpty($ComponentUser))
+    {
+        Write-LogMessage -Type Info -MSG "Could not find Component User from CredFile, trying to look for all offline components"
+        $offlineComponents = $(Get-SystemHealth -ComponentID $Component.Name -OfflineOnly)
+        Foreach($user in $offlineComponents)
+        {
+            $foundUser = $(Find-UserInSystemLogs -User $User.ComponentUserName -LogPaths $Component.ServiceLogs)
+            If(! [string]::IsNullOrEmpty($foundUser)){
+                Write-LogMessage -Type Info -MSG "Found a match between an offline component user '$foundUser' and local logs, will use it to generate CredFile."
+                $ComponentUser = $foundUser
+                if ($CredFile -like "*psmgw.cred*"){
+                    $ComponentUser = "PSMGw_"+$foundUser.split("_")[1]
+                }
+                Break
+            }
+        }
+        If($offlineComponents.Count -eq 0 -or [string]::IsNullOrWhiteSpace($ComponentUser))
+        {
+            Write-LogMessage -Type Info -MSG "Couldn't match offline component user in SystemHealth in local Logs, will have to input manually."
+            do {
+                $ComponentUser = (Read-Host "Enter the relevant user name for CredFile: '$CredFile'").Trim()
+                if ([string]::IsNullOrWhiteSpace($ComponentUser)) {
+                    Write-LogMessage -Type Warning -MSG "No user name was entered. Please enter a valid component user name."
+                }
+            } while ([string]::IsNullOrWhiteSpace($ComponentUser))
+        }
+    }
+
+    return $ComponentUser
+}
+
 Function Get-UserAndResetPassword{
     [CmdletBinding()]
     param (
@@ -2101,17 +2143,46 @@ try{
             Write-Host "Exiting..." -ForegroundColor Gray
             break
         }
-                Else
+        Else
         {
             $answer = [int]$answer #if answer is not a letter (Q) convert to int so we can use the below command
             $typeChosen = $detectedComponents[$answer-1]
-            Invoke-ResetCredFile -Component $typeChosen
+            if ($typeChosen.Name -eq "CPM" -and $typeChosen.Version -ge [version]"14.2")
+            {
+                $typeChosen.InitPVWAURL()
+                Invoke-Logon
+                Foreach($svc in $typeChosen.ServiceName)
+                {
+                    Stop-CYBRService -ServiceName $svc
+                }
+                $resolvedComponentUser = Resolve-ComponentUserForCredFile -Component $typeChosen -CredFile $typeChosen.ComponentUser[0]
+                $global:apiKeyUsername = $resolvedComponentUser
+                $global:apiKeyPath = $typeChosen.Path
+                Write-LogMessage -Type Info -MSG "CPM version $($typeChosen.Version) detected, using SyncCompUsers.exe to update CPM credentials instead of the legacy CreateCredFile.exe flow."
+            }
+            else
+            {
+                Invoke-ResetCredFile -Component $typeChosen
+            }
             switch ($typeChosen.Name)
             {
                 "CPM"
                 {
                     $PluginManagerUser = "PluginManagerUser"
                     $cpmPath = $typeChosen.Path
+                    if($typeChosen.Version -ge [version]"14.2"){
+                        if(Test-Path $CPMnewSyncToolFolder){
+                            ResetCPMUserandAPIkeyNewMethdod -cpmPath $cpmPath -credential $Credentials -apiUser $apiKeyUsername
+                            Foreach($svc in $typeChosen.ServiceName)
+                            {
+                                if (-not($svc -eq "CyberArk Central Policy Manager Scanner")){
+                                    Start-CYBRService -ServiceName $svc
+                                }
+                            }
+                        }Else{
+                            Throw "Couldn't find folder '$CPMnewSyncToolFolder'. Make sure you downloaded the latest tool package."
+                        }
+                    }
                     Write-LogMessage -type Info -MSG "Syncing $PluginManagerUser"
                     if ($typeChosen.Version -ge [version]"13.1")
                     {   
@@ -2198,13 +2269,7 @@ try{
                             } else {
                                 # in 14.2 CPM deprecated apikeymanger tool and we need to use the new tool
                                 if($typeChosen.Version -ge [version]"14.2"){
-                                    #check app exists
-                                    if(Test-Path $CPMnewSyncToolFolder){
-                                        ResetCPMUserandAPIkeyNewMethdod -cpmPath $cpmPath -credential $Credentials -apiUser $apiKeyUsername
-                                    }Else{
-                                        Write-LogMessage -type Error -MSG "Couldn't find folder $syncCompAPpPath make sure you download the latest zip from marketplace."
-                                        Write-LogMessage -type Error -MSG "Skipping API Key reset..."
-                                    }
+                                    Write-LogMessage -type Info -MSG "CPM component credentials were already updated using SyncCompUsers.exe earlier in the flow."
                                 }
                                 Else
                                 {
